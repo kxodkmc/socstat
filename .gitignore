@@ -1,0 +1,34 @@
+# ===== Rust / Cargo =====
+
+# 构建产物（体积大、可再生成，绝不入库）
+/target/
+
+# 编译备份文件
+**/*.rs.bk
+
+# 库工程不提交 Cargo.lock（应用工程才需要提交以保证可重现构建）
+# 如改为提交，删除下面这行即可
+Cargo.lock
+
+# ===== 编辑器 / IDE =====
+
+.vscode/
+.idea/
+*.iml
+*.swp
+*~
+*.sublime-*
+
+# ===== 操作系统垃圾文件 =====
+
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ===== 日志与临时文件 =====
+
+*.log
+*.tmp
+*.bak
+*.orig

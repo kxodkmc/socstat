@@ -118,7 +118,7 @@ passes `cargo test` (and `--features full` where gated).
 | P2 | `dist` module + `stats/descriptive` + `frequencies` + `crosstab` | Full descriptive statistics | ✅ done |
 | P7 | `data/transform`: compute / recode / filter / sort | Data transforms | ✅ done |
 | P3 | `stats/tests`: t-test + ANOVA + chi-square + nonparametric | Full hypothesis-testing | ✅ done |
-| P4 | `stats/regression`: linear (OLS/QR) + logistic (IRLS) | Full regression | ⬜ |
+| P4 | `stats/regression`: linear (OLS/QR) + logistic (IRLS) | Full regression | ✅ done |
 | P5 | `stats/multivariate`: PCA (SVD) + reliability (Cronbach α) | Multivariate analysis | ⬜ |
 | P6 | `io/sav`: SPSS `.sav` binary read/write | Format compatibility | ⬜ |
 | P8 | Integration tests + examples + docs | Production readiness | ⬜ |

@@ -32,6 +32,15 @@ pub enum SocStatError {
     #[error("insufficient data: {0}")]
     InsufficientData(String),
 
+    #[error("singular matrix: {0}")]
+    SingularMatrix(String),
+
+    #[error("convergence not reached after {0} iterations")]
+    ConvergenceNotReached(usize),
+
+    #[error("complete separation: {0}")]
+    CompleteSeparation(String),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 

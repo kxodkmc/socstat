@@ -63,8 +63,10 @@ pub mod prelude {
     };
     pub use crate::error::{SocStatError, SocStatResult};
     pub use crate::stats::{
-        ChiSquareTest, Crosstab, Descriptive, FrequencyRow, FrequencyTable,
-        IndependentTTest, MannWhitneyUTest, OneWayAnova, StatsExt, TTestModel,
+        ChiSquareTest, Coefficient, ConfusionMatrix, CorrelationMethod, CorrelationPair,
+        CorrelationResult, Crosstab, Descriptive, FrequencyRow, FrequencyTable, IndependentTTest,
+        LinearRegressionResult, LogisticCoefficient, LogisticRegressionResult, MannWhitneyUTest,
+        OneWayAnova, StatsExt, TTestModel,
     };
     pub use crate::{read, write};
 }

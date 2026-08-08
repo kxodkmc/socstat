@@ -1,5 +1,5 @@
 //! Statistics module — descriptive stats, frequency tables, crosstabs,
-//! and hypothesis testing.
+//! hypothesis testing, correlation, linear and logistic regression.
 //!
 //! The [`StatsExt`] trait extends [`Dataset`](crate::data::Dataset) with
 //! analysis methods. Statistics automatically use case weights when set.
@@ -29,11 +29,17 @@
 pub mod crosstab;
 pub mod descriptive;
 pub mod frequencies;
+pub mod glm;
+pub mod regression;
 pub mod tests;
 
 pub use crosstab::Crosstab;
 pub use descriptive::Descriptive;
 pub use frequencies::{FrequencyRow, FrequencyTable};
+pub use glm::{BinomialFamily, ConfusionMatrix, GlmFamily, LogisticCoefficient, LogisticRegressionResult};
+pub use regression::{
+    Coefficient, CorrelationMethod, CorrelationPair, CorrelationResult, LinearRegressionResult,
+};
 pub use tests::{
     ChiSquareTest, Effect, GroupSummary, IndependentTTest, LeveneResult, MannWhitneyUTest,
     OneWayAnova, RankSummary, TTestModel,
@@ -81,6 +87,76 @@ pub trait StatsExt {
         dep_var: &str,
         group_var: &str,
     ) -> SocStatResult<MannWhitneyUTest>;
+
+    /// Correlation between every pair of the given numeric variables.
+    ///
+    /// Returns one [`CorrelationPair`] per unordered pair (upper triangle).
+    /// Only the coefficient matching `method` is populated. Missing values
+    /// (including user-missing values) are excluded pairwise; case weights
+    /// are honored.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use socstat::prelude::*;
+    /// fn main() -> SocStatResult<()> {
+    ///     let ds = socstat::read().csv("data.csv")?;
+    ///     for p in ds.correlation(&["height", "weight", "age"], CorrelationMethod::Pearson)? {
+    ///         if let Some(r) = &p.pearson {
+    ///             println!("{} ~ {}: r = {:.3}, p = {:.4}", p.var1, p.var2, r.coefficient, r.p_value);
+    ///         }
+    ///     }
+    ///     Ok(())
+    /// }
+    /// ```
+    fn correlation(
+        &self,
+        vars: &[&str],
+        method: CorrelationMethod,
+    ) -> SocStatResult<Vec<CorrelationPair>>;
+
+    /// Fit a linear regression of `dep_var` on `indep_vars` (OLS).
+    ///
+    /// An intercept is always included. User-missing and system-missing
+    /// values are excluded by listwise deletion; case weights are honored.
+    /// A singular design matrix returns `SocStatError::SingularMatrix`.
+    ///
+    /// ```no_run
+    /// use socstat::prelude::*;
+    /// fn main() -> SocStatResult<()> {
+    ///     let ds = socstat::read().csv("data.csv")?;
+    ///     let model = ds.regression("income", &["age", "education"])?;
+    ///     println!("R² = {:.3}, F = {:.2}, p = {:.4}",
+    ///              model.r_squared, model.f_statistic, model.f_p_value);
+    ///     Ok(())
+    /// }
+    /// ```
+    fn regression(&self, dep_var: &str, indep_vars: &[&str]) -> SocStatResult<LinearRegressionResult>;
+
+    /// Fit a binary logistic regression of the 0/1 outcome `dep_var` on
+    /// `indep_vars` using iteratively reweighted least squares.
+    ///
+    /// An intercept is always included. The dependent variable must be
+    /// numeric and binary (0/1). User-missing and system-missing values are
+    /// excluded by listwise deletion; case weights are honored. Perfectly
+    /// separated data return `SocStatError::CompleteSeparation`; a singular
+    /// weighted design matrix returns `SocStatError::SingularMatrix`.
+    ///
+    /// ```no_run
+    /// use socstat::prelude::*;
+    /// fn main() -> SocStatResult<()> {
+    ///     let ds = socstat::read().csv("data.csv")?;
+    ///     let model = ds.logistic_regression("defaulted", &["age", "income"])?;
+    ///     println!("AIC = {:.2}, residual deviance = {:.2}",
+    ///              model.aic, model.residual_deviance);
+    ///     Ok(())
+    /// }
+    /// ```
+    fn logistic_regression(
+        &self,
+        dep_var: &str,
+        indep_vars: &[&str],
+    ) -> SocStatResult<LogisticRegressionResult>;
 }
 
 impl StatsExt for Dataset {
@@ -155,5 +231,42 @@ impl StatsExt for Dataset {
         let dep = self.column_by_name(dep_var)?;
         let group = self.column_by_name(group_var)?;
         tests::mann_whitney_u(dep, group, self.weights().as_deref())
+    }
+
+    fn correlation(
+        &self,
+        vars: &[&str],
+        method: CorrelationMethod,
+    ) -> SocStatResult<Vec<CorrelationPair>> {
+        if vars.len() < 2 {
+            return Err(crate::error::SocStatError::InsufficientData(
+                "correlation requires at least two variables".into(),
+            ));
+        }
+        let weights = self.weights();
+        let mut out = Vec::with_capacity(vars.len() * (vars.len() - 1) / 2);
+        for i in 0..vars.len() {
+            let x = regression::cleaned_numeric_column(self, vars[i])?;
+            for j in (i + 1)..vars.len() {
+                let y = regression::cleaned_numeric_column(self, vars[j])?;
+                let (x, y, w) = regression::align_slices(&x, &y, weights.as_deref())?;
+                out.push(regression::correlation_pair_aligned(
+                    vars[i], vars[j], &x, &y, w.as_deref(), method,
+                )?);
+            }
+        }
+        Ok(out)
+    }
+
+    fn regression(&self, dep_var: &str, indep_vars: &[&str]) -> SocStatResult<LinearRegressionResult> {
+        LinearRegressionResult::fit(self, dep_var, indep_vars)
+    }
+
+    fn logistic_regression(
+        &self,
+        dep_var: &str,
+        indep_vars: &[&str],
+    ) -> SocStatResult<LogisticRegressionResult> {
+        LogisticRegressionResult::fit(self, dep_var, indep_vars)
     }
 }

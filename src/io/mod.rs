@@ -7,6 +7,7 @@
 //! | CSV     | `csv`    | yes     |
 //! | JSON    | `csv`    | yes     |
 //! | Excel   | `excel`  | no      |
+//! | SPSS .sav | `sav`  | no      |
 
 use std::path::Path;
 
@@ -17,6 +18,8 @@ use crate::error::SocStatResult;
 pub mod csv;
 #[cfg(feature = "csv")]
 pub mod json;
+#[cfg(feature = "sav")]
+pub mod sav;
 
 /// A format reader.
 pub trait Reader {
@@ -65,6 +68,11 @@ impl ReadBuilder {
         self::json::JsonReader.read_path(path.as_ref())
     }
 
+    #[cfg(feature = "sav")]
+    pub fn sav(&self, path: impl AsRef<Path>) -> SocStatResult<Dataset> {
+        self::sav::SavReader.read_path(path.as_ref())
+    }
+
     /// Auto-detect format by file extension.
     pub fn auto(&self, path: impl AsRef<Path>) -> SocStatResult<Dataset> {
         let path = path.as_ref();
@@ -82,6 +90,8 @@ impl ReadBuilder {
             "csv" => self::csv::CsvReader.read_path(path),
             #[cfg(feature = "csv")]
             "json" => self::json::JsonReader.read_path(path),
+            #[cfg(feature = "sav")]
+            "sav" => self::sav::SavReader.read_path(path),
             _ => Err(crate::error::SocStatError::Other(
                 format!("format '{fmt}' not available (feature not enabled)")
             )),
@@ -98,6 +108,11 @@ impl WriteBuilder {
     #[cfg(feature = "csv")]
     pub fn json(&self, ds: &Dataset, path: impl AsRef<Path>) -> SocStatResult<()> {
         self::json::JsonWriter.write_path(ds, path.as_ref())
+    }
+
+    #[cfg(feature = "sav")]
+    pub fn sav(&self, ds: &Dataset, path: impl AsRef<Path>) -> SocStatResult<()> {
+        self::sav::SavWriter.write_path(ds, path.as_ref())
     }
 
     /// Auto-detect format by file extension.
@@ -117,6 +132,8 @@ impl WriteBuilder {
             "csv" => self::csv::CsvWriter.write_path(ds, path),
             #[cfg(feature = "csv")]
             "json" => self::json::JsonWriter.write_path(ds, path),
+            #[cfg(feature = "sav")]
+            "sav" => self::sav::SavWriter.write_path(ds, path),
             _ => Err(crate::error::SocStatError::Other(
                 format!("format '{fmt}' not available (feature not enabled)")
             )),

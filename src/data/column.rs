@@ -17,9 +17,10 @@
 
 use super::value::Value;
 use super::variable::DataType;
+use serde::{Deserialize, Serialize};
 
 /// Physical, typed storage for a single column's data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ColumnData {
     /// Numeric values stored as `f64`. `None` = missing.
     Numeric(Vec<Option<f64>>),

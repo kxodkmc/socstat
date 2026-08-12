@@ -120,7 +120,7 @@ passes `cargo test` (and `--features full` where gated).
 | P3 | `stats/tests`: t-test + ANOVA + chi-square + nonparametric | Full hypothesis-testing | ✅ done |
 | P4 | `stats/regression`: linear (OLS/QR) + logistic (IRLS) | Full regression | ✅ done |
 | P5 | `stats/multivariate`: PCA (SVD) + reliability (Cronbach α) | Multivariate analysis | ⬜ |
-| P6 | `io/sav`: SPSS `.sav` binary read/write | Format compatibility | ⬜ |
+| P6 | `io/sav`: SPSS `.sav` binary read/write | Format compatibility | ✅ done |
 | P8 | Integration tests + examples + docs | Production readiness | ⬜ |
 
 ### Phase invariants (apply to every phase)

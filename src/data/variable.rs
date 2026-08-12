@@ -3,8 +3,10 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 /// The storage type of a variable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum DataType {
     #[default]
     Numeric,
@@ -12,7 +14,7 @@ pub enum DataType {
 }
 
 /// Measurement level — mirrors SPSS's three levels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum MeasureType {
     #[default]
     Nominal,
@@ -24,7 +26,7 @@ pub enum MeasureType {
 ///
 /// SPSS allows up to 3 discrete missing values, or one continuous range
 /// plus one discrete value.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub enum MissingSpec {
     /// No user-defined missing values.
     #[default]
@@ -36,7 +38,7 @@ pub enum MissingSpec {
 }
 
 /// Display format hint for numeric variables.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub enum ValueFormat {
     /// General numeric (default).
     #[default]
@@ -56,7 +58,7 @@ pub enum ValueFormat {
 }
 
 /// Column metadata.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Variable {
     pub name: String,
     pub label: Option<String>,

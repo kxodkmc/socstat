@@ -52,6 +52,12 @@ pub enum SocStatError {
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("sav format error: {0}")]
+    Sav(String),
+
+    #[error("unsupported format: {0}")]
+    UnsupportedFormat(String),
+
     #[error("{0}")]
     Other(String),
 }

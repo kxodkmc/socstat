@@ -6,8 +6,10 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 /// A single cell value — transient, for row-level operations.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     Number(f64),
     Text(String),

@@ -20,6 +20,8 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::{SocStatError, SocStatResult};
 
 use super::column::ColumnData;
@@ -27,7 +29,7 @@ use super::value::Value;
 use super::variable::{DataType, Variable};
 
 /// A dataset: metadata + typed columnar data.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Dataset {
     pub(crate) variables: Vec<Variable>,
     pub(crate) columns: Vec<ColumnData>,

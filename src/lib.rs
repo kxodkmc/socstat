@@ -42,6 +42,7 @@
 //! | `csv`      | CSV + JSON I/O           | yes     |
 //! | `excel`    | Excel (.xlsx) I/O        | no      |
 //! | `datetime` | Date/time value support  | no      |
+//! | `sav`      | SPSS .sav binary I/O     | no      |
 //! | `full`     | All of the above         | no      |
 
 pub mod data;
@@ -66,7 +67,7 @@ pub mod prelude {
         ChiSquareTest, Coefficient, ConfusionMatrix, CorrelationMethod, CorrelationPair,
         CorrelationResult, Crosstab, Descriptive, FrequencyRow, FrequencyTable, IndependentTTest,
         LinearRegressionResult, LogisticCoefficient, LogisticRegressionResult, MannWhitneyUTest,
-        OneWayAnova, StatsExt, TTestModel,
+        OneWayAnova, PcaMatrix, PcaResult, ReliabilityResult, StatsExt, TTestModel,
     };
     pub use crate::{read, write};
 }

@@ -1,5 +1,6 @@
 //! Statistics module — descriptive stats, frequency tables, crosstabs,
-//! hypothesis testing, correlation, linear and logistic regression.
+//! hypothesis testing, correlation, linear and logistic regression, plus
+//! multivariate analysis (PCA and reliability).
 //!
 //! The [`StatsExt`] trait extends [`Dataset`](crate::data::Dataset) with
 //! analysis methods. Statistics automatically use case weights when set.
@@ -30,6 +31,7 @@ pub mod crosstab;
 pub mod descriptive;
 pub mod frequencies;
 pub mod glm;
+pub mod multivariate;
 pub mod regression;
 pub mod tests;
 
@@ -37,6 +39,7 @@ pub use crosstab::Crosstab;
 pub use descriptive::Descriptive;
 pub use frequencies::{FrequencyRow, FrequencyTable};
 pub use glm::{BinomialFamily, ConfusionMatrix, GlmFamily, LogisticCoefficient, LogisticRegressionResult};
+pub use multivariate::{ItemStatistic, PcaComponent, PcaMatrix, PcaResult, ReliabilityResult};
 pub use regression::{
     Coefficient, CorrelationMethod, CorrelationPair, CorrelationResult, LinearRegressionResult,
 };
@@ -157,6 +160,44 @@ pub trait StatsExt {
         dep_var: &str,
         indep_vars: &[&str],
     ) -> SocStatResult<LogisticRegressionResult>;
+
+    /// Principal component analysis of `vars` on the given analysis matrix.
+    ///
+    /// Missing values are excluded by strict listwise deletion; the dataset's
+    /// case-weight variable is honored when set. The returned [`PcaResult`]
+    /// stores the training means/stds, so [`PcaResult::scores`] can score new
+    /// data without re-estimating the standardization.
+    ///
+    /// ```no_run
+    /// use socstat::prelude::*;
+    /// fn main() -> SocStatResult<()> {
+    ///     let ds = socstat::read().csv("data.csv")?;
+    ///     let pca = ds.pca(&["height", "weight", "age"], PcaMatrix::Correlation)?;
+    ///     for c in &pca.components {
+    ///         println!("λ = {:.3} ({:.1}%)", c.eigenvalue, c.explained_variance_ratio * 100.0);
+    ///     }
+    ///     Ok(())
+    /// }
+    /// ```
+    fn pca(&self, vars: &[&str], mode: PcaMatrix) -> SocStatResult<PcaResult>;
+
+    /// Cronbach's alpha reliability analysis of the numeric items `vars`.
+    ///
+    /// Missing values are excluded by strict listwise deletion; the dataset's
+    /// case-weight variable is honored when set. Reports the overall alpha
+    /// plus per-item diagnostics (corrected item-total correlation and
+    /// alpha-if-deleted).
+    ///
+    /// ```no_run
+    /// use socstat::prelude::*;
+    /// fn main() -> SocStatResult<()> {
+    ///     let ds = socstat::read().csv("data.csv")?;
+    ///     let rel = ds.reliability(&["q1", "q2", "q3"])?;
+    ///     println!("α = {:.3}", rel.alpha);
+    ///     Ok(())
+    /// }
+    /// ```
+    fn reliability(&self, vars: &[&str]) -> SocStatResult<ReliabilityResult>;
 }
 
 impl StatsExt for Dataset {
@@ -268,5 +309,13 @@ impl StatsExt for Dataset {
         indep_vars: &[&str],
     ) -> SocStatResult<LogisticRegressionResult> {
         LogisticRegressionResult::fit(self, dep_var, indep_vars)
+    }
+
+    fn pca(&self, vars: &[&str], mode: PcaMatrix) -> SocStatResult<PcaResult> {
+        PcaResult::compute(self, vars, mode)
+    }
+
+    fn reliability(&self, vars: &[&str]) -> SocStatResult<ReliabilityResult> {
+        ReliabilityResult::compute(self, vars)
     }
 }

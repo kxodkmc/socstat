@@ -21,7 +21,7 @@
 //! println!("Mean: {:.2}, Std: {:.2}", d.mean, d.std_dev);
 //! let freq = ds.frequencies("gender")?;
 //! let cross = ds.crosstab("gender", "education")?;
-//! let t = ds.ttest_independent("income", "gender")?;
+//! let t = ds.independent_t_test("income", "gender")?;
 //! println!("t = {:.3}, p = {:.5}", t.equal_variances.t_statistic, t.equal_variances.p_value);
 //! # Ok(())
 //! }
@@ -69,7 +69,7 @@ pub trait StatsExt {
     /// Independent-samples t-test of a numeric dependent variable between
     /// the two groups defined by `group_var`. Reports pooled, Welch, and
     /// Levene's results. Errors if the grouping variable has ≠ 2 groups.
-    fn ttest_independent(
+    fn independent_t_test(
         &self,
         dep_var: &str,
         group_var: &str,
@@ -77,7 +77,7 @@ pub trait StatsExt {
 
     /// One-way ANOVA of a numeric dependent variable across the groups of
     /// `factor_var`.
-    fn anova_one_way(&self, dep_var: &str, factor_var: &str) -> SocStatResult<OneWayAnova>;
+    fn one_way_anova(&self, dep_var: &str, factor_var: &str) -> SocStatResult<OneWayAnova>;
 
     /// Pearson chi-square test of independence between two categorical
     /// variables.
@@ -85,7 +85,7 @@ pub trait StatsExt {
 
     /// Mann–Whitney U test of a numeric dependent variable between the two
     /// groups defined by `group_var`.
-    fn mann_whitney_u(
+    fn mann_whitney_u_test(
         &self,
         dep_var: &str,
         group_var: &str,
@@ -117,6 +117,17 @@ pub trait StatsExt {
         vars: &[&str],
         method: CorrelationMethod,
     ) -> SocStatResult<Vec<CorrelationPair>>;
+
+    /// Correlation between exactly two variables (UX-004).
+    ///
+    /// Convenience wrapper over [`correlation`](Self::correlation) for the
+    /// common two-variable case; returns the single [`CorrelationPair`].
+    fn correlation_pair(
+        &self,
+        var1: &str,
+        var2: &str,
+        method: CorrelationMethod,
+    ) -> SocStatResult<CorrelationPair>;
 
     /// Fit a linear regression of `dep_var` on `indep_vars` (OLS).
     ///
@@ -202,28 +213,53 @@ pub trait StatsExt {
 
 impl StatsExt for Dataset {
     fn descriptive(&self, var: &str) -> SocStatResult<Descriptive> {
-        let col = self.column_by_name(var)?;
+        let idx = self.index_of(var)?;
+        let var_def = &self.variables()[idx];
+        let col = self.column(idx)?;
         let slice = col.as_numeric().ok_or_else(|| crate::error::SocStatError::TypeMismatch {
             var: var.into(),
             expected: "Numeric",
             actual: "Text",
         })?;
 
-        // Extract valid values
-        let data: Vec<f64> = slice.iter()
-            .filter_map(|o| *o)
-            .collect();
+        // Extract valid values, excluding system-missing and user-missing
+        // values (Hard Rule 4). When a weight variable is set, drop the
+        // weight of every excluded case so the weight slice stays aligned
+        // with the data slice — otherwise `compute()` would silently fall
+        // back to an unweighted result (BUG-001).
+        let weights = self.weights();
+        let (data, aligned_weights): (Vec<f64>, Option<Vec<f64>>) = match &weights {
+            Some(w) => {
+                let (d, aw): (Vec<f64>, Vec<f64>) = slice
+                    .iter()
+                    .zip(w.iter())
+                    .filter_map(|(val, wt)| {
+                        let v = (*val)?;
+                        if var_def.is_user_missing(v) || !(wt.is_finite() && *wt > 0.0) {
+                            None
+                        } else {
+                            Some((v, *wt))
+                        }
+                    })
+                    .unzip();
+                (d, if aw.is_empty() { None } else { Some(aw) })
+            }
+            None => {
+                let d: Vec<f64> = slice
+                    .iter()
+                    .filter_map(|o| o.filter(|v| !var_def.is_user_missing(*v)))
+                    .collect();
+                (d, None)
+            }
+        };
 
         if data.is_empty() {
-            return Err(crate::error::SocStatError::Computation(
-                format!("no valid values in variable '{var}'")
+            return Err(crate::error::SocStatError::InsufficientData(
+                format!("no valid values in variable '{var}'"),
             ));
         }
 
-        // Get weights if available
-        let weights = self.weights();
-
-        Ok(descriptive::compute(&data, weights.as_deref()))
+        Ok(descriptive::compute(&data, aligned_weights.as_deref()))
     }
 
     fn frequencies(&self, var: &str) -> SocStatResult<FrequencyTable> {
@@ -239,7 +275,7 @@ impl StatsExt for Dataset {
         crosstab::build(row_col, col_col)
     }
 
-    fn ttest_independent(
+    fn independent_t_test(
         &self,
         dep_var: &str,
         group_var: &str,
@@ -247,10 +283,10 @@ impl StatsExt for Dataset {
         self.numeric_slice(dep_var)?;
         let dep = self.column_by_name(dep_var)?;
         let group = self.column_by_name(group_var)?;
-        tests::independent_ttest(dep, group, self.weights().as_deref())
+        tests::independent_t_test(dep, group, self.weights().as_deref())
     }
 
-    fn anova_one_way(&self, dep_var: &str, factor_var: &str) -> SocStatResult<OneWayAnova> {
+    fn one_way_anova(&self, dep_var: &str, factor_var: &str) -> SocStatResult<OneWayAnova> {
         self.numeric_slice(dep_var)?;
         let dep = self.column_by_name(dep_var)?;
         let factor = self.column_by_name(factor_var)?;
@@ -263,7 +299,7 @@ impl StatsExt for Dataset {
         tests::chi_square_test(c1, c2, self.weights().as_deref())
     }
 
-    fn mann_whitney_u(
+    fn mann_whitney_u_test(
         &self,
         dep_var: &str,
         group_var: &str,
@@ -271,7 +307,7 @@ impl StatsExt for Dataset {
         self.numeric_slice(dep_var)?;
         let dep = self.column_by_name(dep_var)?;
         let group = self.column_by_name(group_var)?;
-        tests::mann_whitney_u(dep, group, self.weights().as_deref())
+        tests::mann_whitney_u_test(dep, group, self.weights().as_deref())
     }
 
     fn correlation(
@@ -299,6 +335,19 @@ impl StatsExt for Dataset {
         Ok(out)
     }
 
+    fn correlation_pair(
+        &self,
+        var1: &str,
+        var2: &str,
+        method: CorrelationMethod,
+    ) -> SocStatResult<CorrelationPair> {
+        let x = regression::cleaned_numeric_column(self, var1)?;
+        let y = regression::cleaned_numeric_column(self, var2)?;
+        let weights = self.weights();
+        let (x, y, w) = regression::align_slices(&x, &y, weights.as_deref())?;
+        regression::correlation_pair_aligned(var1, var2, &x, &y, w.as_deref(), method)
+    }
+
     fn regression(&self, dep_var: &str, indep_vars: &[&str]) -> SocStatResult<LinearRegressionResult> {
         LinearRegressionResult::fit(self, dep_var, indep_vars)
     }
@@ -317,5 +366,54 @@ impl StatsExt for Dataset {
 
     fn reliability(&self, vars: &[&str]) -> SocStatResult<ReliabilityResult> {
         ReliabilityResult::compute(self, vars)
+    }
+}
+
+#[cfg(test)]
+mod stats_tests {
+    use super::*;
+    use crate::data::{Value, Variable};
+    use approx::assert_abs_diff_eq;
+
+    #[test]
+    fn descriptive_weights_aligned_after_missing() {
+        // BUG-001: weights must stay aligned with the valid values so a
+        // missing value does not silently drop the weights.
+        let mut ds = Dataset::new();
+        ds.add_var(Variable::numeric("x")).unwrap();
+        ds.add_var(Variable::numeric("w").weight()).unwrap();
+        ds.push_row(vec![Value::Number(10.0), Value::Number(1.0)]).unwrap();
+        ds.push_row(vec![Value::Missing, Value::Number(2.0)]).unwrap();
+        ds.push_row(vec![Value::Number(20.0), Value::Number(3.0)]).unwrap();
+
+        let d = ds.descriptive("x").unwrap();
+        // Weighted mean = (10*1 + 20*3) / (1+3) = 70/4 = 17.5; n = 4.
+        assert_abs_diff_eq!(d.n, 4.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(d.mean, 17.5, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn descriptive_user_missing_excluded() {
+        let mut ds = Dataset::new();
+        ds.add_var(Variable::numeric("x").missing_discrete(&[-1.0])).unwrap();
+        ds.push_row(vec![Value::Number(1.0)]).unwrap();
+        ds.push_row(vec![Value::Number(-1.0)]).unwrap();
+        ds.push_row(vec![Value::Number(3.0)]).unwrap();
+        let d = ds.descriptive("x").unwrap();
+        assert_abs_diff_eq!(d.n, 2.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(d.mean, 2.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn correlation_pair_shortcut() {
+        let mut ds = Dataset::new();
+        ds.add_var(Variable::numeric("a")).unwrap();
+        ds.add_var(Variable::numeric("b")).unwrap();
+        for (a, b) in [(1.0, 2.0), (2.0, 4.0), (3.0, 6.0), (4.0, 8.0), (5.0, 10.0)] {
+            ds.push_row(vec![Value::Number(a), Value::Number(b)]).unwrap();
+        }
+        let p = ds.correlation_pair("a", "b", CorrelationMethod::Pearson).unwrap();
+        assert!(p.pearson.is_some());
+        assert_abs_diff_eq!(p.pearson.as_ref().unwrap().coefficient, 1.0, epsilon = 1e-12);
     }
 }

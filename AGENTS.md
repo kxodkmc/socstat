@@ -83,17 +83,34 @@ src/
   `no_run` example where reasonable. Crate-level `lib.rs` docs show a Quick Start.
 - **No comments unless they explain "why"** or are the required module/API docs.
 
+### Naming conventions (API-006)
+
+- **Methods** are noun-phrases describing the analysis; test methods end in
+  `_test` or use the established test name. Examples: `independent_t_test`,
+  `one_way_anova`, `chi_square_test`, `mann_whitney_u_test`, `descriptive`,
+  `correlation_pair`. Avoid verb-first names like `ttest_independent`.
+- **Count fields** use an `n_` prefix (`n_valid`, `n_missing`, `n_eff`).
+- **Label vectors** use a `*_labels` suffix (`row_labels`, `col_labels`);
+  per-group summaries use a `*_stats` suffix (`group_stats`).
+- **Scalar short names** are fine for self-contained structs (`n`, `mean`,
+  `std_dev`). Keep one convention per concept across structs.
+- **Existing public fields are not renamed** (breaks serde round-trips and
+  FFI). To normalize awkward access, add a convenience accessor method instead
+  (e.g. `CorrelationPair::coefficient()`, regression `intercept()`).
+- **New result structs** follow these rules from the start.
+
 ## 5. Dependencies & features
 
 - Default build stays light: `nalgebra`, `statrs`, `serde`, `thiserror`, plus
   `csv`/`serde_json` via the `csv` feature.
-- Optional heavy deps live behind features: `excel` → `calamine` + `rust_xlsxwriter`,
-  `datetime` → `chrono`. The `sav` feature flag was removed (Hard Rule 3: no fake
-  claims) until P6 actually implements `src/io/sav.rs`.
+- Feature flags must be real (Hard Rule 3). `sav` was enabled only once
+  `src/io/sav.rs` existed; `excel` → `calamine` + `rust_xlsxwriter` and
+  `datetime` → `chrono` were **removed** (not just stubbed) until their
+  modules are actually implemented. Do not re-add a feature as a placeholder.
 - Before adding a dependency, ask: can this be done with the stdlib or an
   existing dep? Is it worth the compile time for default users?
-- Keep `full` = all features. Run a `--features full` build to verify feature
-  coherence after any `Cargo.toml` change.
+- Keep `full` = all enabled features. Run a `--features full` build to verify
+  feature coherence after any `Cargo.toml` change.
 
 ## 6. Verification (always run before finishing)
 

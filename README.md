@@ -157,24 +157,24 @@ let cross = ds.crosstab("gender", "education")?;
 
 | 方法 | 说明 |
 |------|------|
-| `ttest_independent(dep, group)` | 独立样本 t 检验：组统计量 + Levene 方差齐性检验 + 合并方差（pooled）模型 + Welch 模型。要求分组变量恰好两个类别 |
-| `anova_one_way(dep, factor)` | 单因素 ANOVA：组间/组内平方和、F、p、效应量 η²。要求至少两个组 |
+| `independent_t_test(dep, group)` | 独立样本 t 检验：组统计量 + Levene 方差齐性检验 + 合并方差（pooled）模型 + Welch 模型。要求分组变量恰好两个类别 |
+| `one_way_anova(dep, factor)` | 单因素 ANOVA：组间/组内平方和、F、p、效应量 η²。要求至少两个组 |
 | `chi_square_test(v1, v2)` | 卡方独立性检验：观测/期望频数、χ²、自由度、p。要求两变量均至少两个类别 |
-| `mann_whitney_u(dep, group)` | Mann–Whitney U 非参数检验：秩和、U、z（含结校正）、渐近 p。要求分组变量恰好两个类别 |
+| `mann_whitney_u_test(dep, group)` | Mann–Whitney U 非参数检验：秩和、U、z（含结校正）、渐近 p。要求分组变量恰好两个类别 |
 
 ```rust
-let t = ds.ttest_independent("len", "supp")?;
+let t = ds.independent_t_test("len", "supp")?;
 println!("t = {:.4}, p = {:.4}", t.equal_variances.t_statistic, t.equal_variances.p_value);
 println!("Welch: t = {:.4}, p = {:.4}", t.unequal_variances.t_statistic, t.unequal_variances.p_value);
 
-let a = ds.anova_one_way("len", "dose")?;
+let a = ds.one_way_anova("len", "dose")?;
 println!("F = {:.4}, p = {:.4}, eta^2 = {:.4}", a.f_statistic, a.p_value, a.eta_squared);
 
 let c = ds.chi_square_test("supp", "outcome")?;
-let m = ds.mann_whitney_u("len", "supp")?;
+let m = ds.mann_whitney_u_test("len", "supp")?;
 ```
 
-**约束**：`ttest_independent` 与 `mann_whitney_u` 要求分组变量恰好两个类别；`anova_one_way` 要求至少两个组；`chi_square_test` 要求两个变量均至少两个类别。违规返回 `SocStatError::InsufficientData`。
+**约束**：`independent_t_test` 与 `mann_whitney_u_test` 要求分组变量恰好两个类别；`one_way_anova` 要求至少两个组；`chi_square_test` 要求两个变量均至少两个类别。违规返回 `SocStatError::InsufficientData`。
 
 **说明**：Mann–Whitney U 采用渐近正态近似（含结校正），与 SPSS 的渐近显著性一致；小样本下与 R `wilcox.test` 的精确检验可能不同。
 
@@ -277,9 +277,9 @@ socstat::write().sav(&ds, "out.sav")?;       // 需启用 sav 特性
 |------|------|------|
 | `csv` | CSV + JSON 读写 | 是 |
 | `sav` | SPSS .sav 二进制读写 | 否 |
-| `excel` | 已声明依赖（`calamine` + `rust_xlsxwriter`），读写逻辑尚未实现 | 否 |
-| `datetime` | 已声明依赖（`chrono`），尚未实现 | 否 |
-| `full` | `csv` + `excel` + `datetime` + `sav` | 否 |
+| `full` | `csv` + `sav` | 否 |
+
+> `excel` 与 `datetime` 特性已从 `Cargo.toml` 移除（见 Hard Rule 3：不声明未实现的能力），待 `src/io/excel.rs` 与日期时间模块真实落地后再恢复。
 
 ## 错误处理
 
@@ -313,7 +313,7 @@ cargo clippy -- -D warnings # 无新增警告
 
 ## 已知限制
 
-- `excel` 与 `datetime` 特性已声明依赖，但读写/支持逻辑尚未实现，启用后不会提供对应 API。
+- `excel` 与 `datetime` 尚未实现，相关 feature 已从 `Cargo.toml` 移除（Hard Rule 3），待后续版本落地。
 - 权重仅支持频率权重，不支持概率（复杂抽样）权重。
 - Mann–Whitney U 只提供渐近近似，不提供精确 p 值。
 - 结果中的极端退化情形（如完全常数组的 F/t 统计量）可能产生非有限值（`NaN`/`Inf`），严格 JSON 序列化无法表示此类值。

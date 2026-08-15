@@ -40,8 +40,6 @@
 //! | Feature    | Description              | Default |
 //! |------------|--------------------------|---------|
 //! | `csv`      | CSV + JSON I/O           | yes     |
-//! | `excel`    | Excel (.xlsx) I/O        | no      |
-//! | `datetime` | Date/time value support  | no      |
 //! | `sav`      | SPSS .sav binary I/O     | no      |
 //! | `full`     | All of the above         | no      |
 

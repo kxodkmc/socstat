@@ -6,7 +6,6 @@
 //! |---------|----------|---------|
 //! | CSV     | `csv`    | yes     |
 //! | JSON    | `csv`    | yes     |
-//! | Excel   | `excel`  | no      |
 //! | SPSS .sav | `sav`  | no      |
 
 use std::path::Path;
@@ -61,6 +60,27 @@ impl ReadBuilder {
     #[cfg(feature = "csv")]
     pub fn csv(&self, path: impl AsRef<Path>) -> SocStatResult<Dataset> {
         self::csv::CsvReader.read_path(path.as_ref())
+    }
+
+    /// Read a CSV with per-column user-defined missing-value rules.
+    ///
+    /// ```no_run
+    /// use socstat::io::csv::CsvReaderOptions;
+    /// fn main() -> socstat::error::SocStatResult<()> {
+    ///     let opts = CsvReaderOptions::new()
+    ///         .missing_discrete("income", &[-999.0])
+    ///         .missing_range("age", 0.0, 5.0, None);
+    ///     let ds = socstat::read().csv_with_options("data.csv", &opts)?;
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(feature = "csv")]
+    pub fn csv_with_options(
+        &self,
+        path: impl AsRef<Path>,
+        options: &self::csv::CsvReaderOptions,
+    ) -> SocStatResult<Dataset> {
+        self::csv::CsvReader.read_path_with_options(path.as_ref(), options)
     }
 
     #[cfg(feature = "csv")]

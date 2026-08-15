@@ -88,6 +88,16 @@ pub struct CorrelationPair {
     pub kendall: Option<CorrelationResult>,
 }
 
+impl CorrelationPair {
+    /// The coefficient result for whichever [`CorrelationMethod`] this pair
+    /// was computed with, without having to match on the three option fields.
+    pub fn coefficient(&self) -> Option<&CorrelationResult> {
+        self.pearson.as_ref()
+            .or(self.spearman.as_ref())
+            .or(self.kendall.as_ref())
+    }
+}
+
 /// A single regression coefficient with its full diagnostics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Coefficient {
@@ -846,6 +856,12 @@ impl LinearRegressionResult {
         }
         Ok(value)
     }
+
+    /// The intercept (constant term) estimate, without indexing
+    /// `coefficients[0]` (UX-002).
+    pub fn intercept(&self) -> f64 {
+        self.coefficients.first().map(|c| c.estimate).unwrap_or(0.0)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1146,10 +1162,26 @@ mod tests {
     }
 
     #[test]
+    fn correlation_pair_coefficient_accessor() {
+        let d = dataset(&[1.0, 2.0, 3.0, 4.0, 5.0], &[2.0, 4.0, 6.0, 8.0, 10.0]);
+        let p = d.correlation_pair("x", "y", CorrelationMethod::Spearman).unwrap();
+        let c = p.coefficient().expect("spearman result populated");
+        assert_abs_diff_eq!(c.coefficient, 1.0, epsilon = 1e-12);
+    }
+
+    #[test]
     fn regression_trait_works() {
         let d = dataset(&[1.0, 2.0, 3.0, 4.0, 5.0], &[2.0, 4.0, 5.0, 4.0, 5.0]);
         let m = d.regression("y", &["x"]).unwrap();
         assert_abs_diff_eq!(m.coefficients[1].estimate, 0.6, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn linear_regression_intercept_accessor() {
+        let d = dataset(&[1.0, 2.0, 3.0, 4.0, 5.0], &[2.0, 4.0, 5.0, 4.0, 5.0]);
+        let m = LinearRegressionResult::fit(&d, "y", &["x"]).unwrap();
+        assert_abs_diff_eq!(m.intercept(), m.coefficients[0].estimate, epsilon = 1e-15);
+        assert_abs_diff_eq!(m.intercept(), 2.2, epsilon = 1e-12);
     }
 
     #[test]

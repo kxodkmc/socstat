@@ -1160,7 +1160,7 @@ mod tests {
             ],
             vec![
                 Value::Number(-1.0),
-                Value::Number(3.141592653589793),
+                Value::Number(std::f64::consts::PI),
                 Value::Number(2.0),
                 Value::Text("F".into()),
                 Value::Text("héllo wörld".into()),

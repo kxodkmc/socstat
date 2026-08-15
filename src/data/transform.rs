@@ -137,6 +137,40 @@ impl Dataset {
         Ok(())
     }
 
+    /// Recode a numeric variable into a **new** variable, keeping the source
+    /// column intact. Mirrors SPSS `RECODE ... INTO new_var` (UX-001).
+    ///
+    /// ```ignore
+    /// ds.recode_into("age", "age_group", |v| match v {
+    ///     Some(n) if n < 18.0 => Some(1.0), // "under 18"
+    ///     Some(_) => Some(2.0),             // "adult"
+    ///     None => None,
+    /// })?;
+    /// ```
+    pub fn recode_into<F>(&mut self, src: &str, dst: &str, f: F) -> SocStatResult<()>
+    where
+        F: Fn(Option<f64>) -> Option<f64>,
+    {
+        let idx = self.index_of(src)?;
+        let col = self.column(idx)?;
+        if col.as_numeric().is_none() {
+            return Err(SocStatError::TypeMismatch {
+                var: src.into(), expected: "Numeric", actual: "Text",
+            });
+        }
+
+        // Collect the mapped values before mutating the dataset.
+        let old: Vec<Option<f64>> = self.column(idx)?
+            .as_numeric().unwrap().to_vec();
+        let new: Vec<Option<f64>> = old.into_iter().map(f).collect();
+
+        let var = Variable::numeric(dst).measure(MeasureType::Scale);
+        self.add_var(var)?;
+        let didx = self.index_of(dst)?;
+        self.columns[didx] = ColumnData::Numeric(new);
+        Ok(())
+    }
+
     /// Filter cases: keep only rows where the predicate returns true.
     pub fn filter<F>(&mut self, predicate: F) -> SocStatResult<usize>
     where
@@ -272,6 +306,21 @@ mod tests {
         }).unwrap();
         let groups = ds.numeric_values("age").unwrap();
         assert_eq!(groups, vec![1.0, 2.0]); // row 2 (missing) is excluded
+    }
+
+    #[test]
+    fn recode_into_keeps_source() {
+        let mut ds = sample();
+        ds.recode_into("age", "age_group", |v| match v {
+            Some(n) if n < 30.0 => Some(1.0),
+            Some(_) => Some(2.0),
+            None => None,
+        }).unwrap();
+        // Source column is unchanged.
+        assert_eq!(ds.numeric_values("age").unwrap(), vec![25.0, 30.0]);
+        // New column holds the recoded values, aligned by row.
+        let slices = ds.numeric_slice("age_group").unwrap();
+        assert_eq!(slices, &[Some(1.0), Some(2.0), None]);
     }
 
     #[test]

@@ -324,7 +324,7 @@ fn group_summary(label: &str, ws: &WeightedSummary) -> GroupSummary {
 ///
 /// `dep` must be a numeric column; `group` splits cases into **exactly two**
 /// groups. `weights` are optional frequency weights aligned by row index.
-pub fn independent_ttest(
+pub fn independent_t_test(
     dep: &ColumnData,
     group: &ColumnData,
     weights: Option<&[f64]>,
@@ -357,6 +357,14 @@ pub fn independent_ttest(
     // Equal variances (pooled).
     let pooled_var = ((n1 - 1.0) * var1 + (n2 - 1.0) * var2) / (n1 + n2 - 2.0);
     let se_eq = (pooled_var * (1.0 / n1 + 1.0 / n2)).sqrt();
+    // A zero (or non-finite) standard error means at least one group has zero
+    // variance; the t statistic is NaN/Inf and the statrs p-value machinery
+    // would panic. Return an error instead of crashing the host (BUG-003).
+    if !(se_eq.is_finite() && se_eq > 0.0) {
+        return Err(SocStatError::InsufficientData(
+            "independent t-test is undefined: one or both groups have zero variance".into(),
+        ));
+    }
     let t_eq = mean_diff / se_eq;
     let df_eq = n1 + n2 - 2.0;
     let dist_eq = StudentsTDist::new(df_eq)?;
@@ -680,7 +688,7 @@ fn extract_labels(col: &ColumnData) -> Vec<Option<String>> {
 /// (this matches SPSS's asymptotic significance). Does **not** report exact
 /// p-values, so results for tiny samples may differ from R's `wilcox.test`
 /// which defaults to an exact test.
-pub fn mann_whitney_u(
+pub fn mann_whitney_u_test(
     dep: &ColumnData,
     group: &ColumnData,
     weights: Option<&[f64]>,
@@ -849,7 +857,7 @@ mod unit {
         let dep = num_col(&[Some(5.0), Some(6.0), Some(7.0), Some(8.0),
                             Some(1.0), Some(2.0), Some(3.0), Some(4.0)]);
         let grp = num_col(&[Some(1.0); 4].into_iter().chain(vec![Some(2.0); 4]).collect::<Vec<_>>());
-        let r = independent_ttest(&dep, &grp, None).unwrap();
+        let r = independent_t_test(&dep, &grp, None).unwrap();
 
         assert_eq!(r.group_stats.len(), 2);
         let g1 = &r.group_stats[0];
@@ -883,9 +891,21 @@ mod unit {
     fn ttest_rejects_non_two_groups() {
         let dep = num_col(&[Some(1.0), Some(2.0), Some(3.0), Some(4.0)]);
         let grp = num_col(&[Some(1.0), Some(1.0), Some(2.0), Some(2.0)]);
-        assert!(independent_ttest(&dep, &grp, None).is_ok());
+        assert!(independent_t_test(&dep, &grp, None).is_ok());
         let grp3 = num_col(&[Some(1.0), Some(2.0), Some(3.0), Some(4.0)]);
-        assert!(independent_ttest(&dep, &grp3, None).is_err());
+        assert!(independent_t_test(&dep, &grp3, None).is_err());
+    }
+
+    #[test]
+    fn ttest_zero_variance_errors_not_panics() {
+        // BUG-003: identical groups (zero variance) must return an error, not
+        // panic inside statrs.
+        let dep = num_col(&[Some(10.0); 10]);
+        let grp_vals: Vec<Option<f64>> = [Some(1.0); 5].into_iter()
+            .chain(vec![Some(2.0); 5])
+            .collect();
+        let grp = num_col(&grp_vals);
+        assert!(independent_t_test(&dep, &grp, None).is_err());
     }
 
     #[test]
@@ -897,7 +917,7 @@ mod unit {
         let grp_a = num_col(&[Some(1.0), Some(1.0), Some(1.0),
                               Some(2.0), Some(2.0), Some(2.0)]);
         let w = vec![2.0, 2.0, 2.0, 2.0, 2.0, 2.0];
-        let r_w = independent_ttest(&dep_a, &grp_a, Some(&w)).unwrap();
+        let r_w = independent_t_test(&dep_a, &grp_a, Some(&w)).unwrap();
 
         let dep_b = num_col(&[
             Some(1.0), Some(1.0), Some(2.0), Some(2.0), Some(3.0), Some(3.0),
@@ -905,7 +925,7 @@ mod unit {
         ]);
         let grp_b = num_col(&[
             Some(1.0); 6].into_iter().chain(vec![Some(2.0); 6]).collect::<Vec<_>>());
-        let r_u = independent_ttest(&dep_b, &grp_b, None).unwrap();
+        let r_u = independent_t_test(&dep_b, &grp_b, None).unwrap();
 
         assert_abs_diff_eq!(r_w.equal_variances.t_statistic,
                             r_u.equal_variances.t_statistic, epsilon = 1e-9);
@@ -988,7 +1008,7 @@ mod unit {
                             Some(4.0), Some(5.0), Some(6.0)]);
         let grp = num_col(&[Some(1.0), Some(1.0), Some(1.0),
                             Some(2.0), Some(2.0), Some(2.0)]);
-        let r = mann_whitney_u(&dep, &grp, None).unwrap();
+        let r = mann_whitney_u_test(&dep, &grp, None).unwrap();
 
         // Ranks of group 1 are 1,2,3 → R1=6 → U1 = 6 - 6 = 0; U2 = 9.
         assert_abs_diff_eq!(r.u_statistic, 0.0, epsilon = 1e-12);
@@ -1008,7 +1028,7 @@ mod unit {
                             Some(2.0), Some(3.0), Some(4.0)]);
         let grp = num_col(&[Some(1.0), Some(1.0), Some(1.0),
                             Some(2.0), Some(2.0), Some(2.0)]);
-        let r = mann_whitney_u(&dep, &grp, None).unwrap();
+        let r = mann_whitney_u_test(&dep, &grp, None).unwrap();
         assert!(r.has_ties);
         // Tie correction must produce a finite, non-NaN result.
         assert!(r.z_score.is_finite());
@@ -1022,7 +1042,7 @@ mod unit {
         let dep = num_col(&[Some(5.0), Some(6.0), Some(7.0), Some(8.0),
                             Some(1.0), Some(2.0), Some(3.0), Some(4.0)]);
         let grp = num_col(&[Some(1.0); 4].into_iter().chain(vec![Some(2.0); 4]).collect::<Vec<_>>());
-        let ttest = independent_ttest(&dep, &grp, None).unwrap();
+        let ttest = independent_t_test(&dep, &grp, None).unwrap();
         let json = serde_json::to_string(&ttest).unwrap();
         let back: IndependentTTest = serde_json::from_str(&json).unwrap();
         assert_abs_diff_eq!(back.equal_variances.t_statistic,
@@ -1040,7 +1060,7 @@ mod unit {
         let back: ChiSquareTest = serde_json::from_str(&json).unwrap();
         assert_abs_diff_eq!(back.chi_square, ct.chi_square, epsilon = 1e-15);
 
-        let mwu = mann_whitney_u(&dep, &grp, None).unwrap();
+        let mwu = mann_whitney_u_test(&dep, &grp, None).unwrap();
         let json = serde_json::to_string(&mwu).unwrap();
         let back: MannWhitneyUTest = serde_json::from_str(&json).unwrap();
         assert_abs_diff_eq!(back.u_statistic, mwu.u_statistic, epsilon = 1e-15);

@@ -344,6 +344,10 @@ pub struct LogisticCoefficient {
     pub p_value: f64,
     /// 95% confidence interval `(lower, upper)`, normal-based.
     pub ci_95: (f64, f64),
+    /// Odds ratio = `exp(estimate)`.
+    pub odds_ratio: f64,
+    /// 95% confidence interval for the odds ratio `(lower, upper)`.
+    pub odds_ratio_ci_95: (f64, f64),
 }
 
 /// Result of fitting a binary logistic regression model.
@@ -584,6 +588,8 @@ fn fit_logistic(
             z_statistic,
             p_value,
             ci_95,
+            odds_ratio: estimate.exp(),
+            odds_ratio_ci_95: (ci_95.0.exp(), ci_95.1.exp()),
         });
     }
 
@@ -720,6 +726,12 @@ impl LogisticRegressionResult {
             out.push(if complete { Some(expit(eta)) } else { None });
         }
         Ok(out)
+    }
+
+    /// The intercept (log-odds) estimate, without indexing
+    /// `coefficients[0]` (UX-002).
+    pub fn intercept(&self) -> f64 {
+        self.coefficients.first().map(|c| c.estimate).unwrap_or(0.0)
     }
 
     /// Predict the probability for a single row via a [`RowView`].
@@ -1108,6 +1120,19 @@ mod tests {
         let m = d.logistic_regression("y", &["x1", "x2"]).unwrap();
         assert!(m.converged);
         assert_eq!(m.model_formula, "y ~ x1 + x2");
+    }
+
+    #[test]
+    fn logistic_odds_ratio_and_intercept() {
+        let d = mtcars();
+        let m = LogisticRegressionResult::fit(&d, "y", &["x1", "x2"]).unwrap();
+        // odds_ratio = exp(estimate); its CI = exp of the log-odds CI.
+        for c in &m.coefficients {
+            assert_abs_diff_eq!(c.odds_ratio, c.estimate.exp(), epsilon = 1e-12);
+            assert_abs_diff_eq!(c.odds_ratio_ci_95.0, c.ci_95.0.exp(), epsilon = 1e-12);
+            assert_abs_diff_eq!(c.odds_ratio_ci_95.1, c.ci_95.1.exp(), epsilon = 1e-12);
+        }
+        assert_abs_diff_eq!(m.intercept(), m.coefficients[0].estimate, epsilon = 1e-15);
     }
 
     #[test]

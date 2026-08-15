@@ -50,7 +50,7 @@ fn main() -> SocStatResult<()> {
     println!("Dataset: {} vars, {} rows (loaded from {})\n", ds.n_vars(), ds.n_rows(), csv_path.display());
 
     // --- Independent-samples t-test: len by supp ---
-    let t = ds.ttest_independent("len", "supp")?;
+    let t = ds.independent_t_test("len", "supp")?;
     println!("=== Independent t-test: len by supp ===");
     for g in &t.group_stats {
         println!("  {}  n={:.1}  mean={:.3}  sd={:.3}", g.label, g.n, g.mean, g.std_dev);
@@ -61,7 +61,7 @@ fn main() -> SocStatResult<()> {
     println!("  {}\n", serde_json::to_string_pretty(&t).unwrap());
 
     // --- One-way ANOVA: len by dose (3 groups) ---
-    let a = ds.anova_one_way("len", "dose")?;
+    let a = ds.one_way_anova("len", "dose")?;
     println!("=== One-way ANOVA: len by dose ===");
     for g in &a.group_stats {
         println!("  dose {}  n={:.1}  mean={:.3}", g.label, g.n, g.mean);
@@ -76,7 +76,7 @@ fn main() -> SocStatResult<()> {
     println!("  {}\n", serde_json::to_string_pretty(&c).unwrap());
 
     // --- Mann–Whitney U: len by supp ---
-    let m = ds.mann_whitney_u("len", "supp")?;
+    let m = ds.mann_whitney_u_test("len", "supp")?;
     println!("=== Mann–Whitney U: len by supp ===");
     for g in &m.group_stats {
         println!("  {}  n={:.1}  mean_rank={:.3}", g.label, g.n, g.mean_rank);

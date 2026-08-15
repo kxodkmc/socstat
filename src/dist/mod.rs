@@ -33,6 +33,8 @@ pub trait Distribution {
     fn cdf(&self, x: f64) -> f64;
 
     /// Inverse CDF (quantile function): returns x such that P(X ≤ x) = p.
-    /// Panics or returns NaN for p outside (0, 1) depending on the distribution.
+    /// For `p` outside the open interval (0, 1) the behavior is
+    /// distribution-specific: the underlying quantile may clamp, return NaN,
+    /// or panic. Pass only `p` in `(0, 1)` for well-defined results.
     fn inverse_cdf(&self, p: f64) -> f64;
 }

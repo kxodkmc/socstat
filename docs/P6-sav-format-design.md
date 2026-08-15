@@ -219,10 +219,10 @@ pub fn sav(&self, path: impl AsRef<Path>) -> SocStatResult<Dataset> { ... }
 [features]
 default = ["csv"]
 csv = ["dep:csv", "dep:serde_json"]
-excel = ["dep:calamine", "dep:rust_xlsxwriter"]
-datetime = ["dep:chrono"]
 sav = ["dep:flate2"]            # 新增
-full = ["csv", "excel", "datetime", "sav"]   # sav 加入 full
+full = ["csv", "sav"]            # sav 加入 full
+# 注:excel/datetime 特性已于后续移除(Hard Rule 3:不声明未实现的能力),
+# 待 src/io/excel.rs 与日期时间模块真实落地后再恢复。
 
 [dependencies]
 flate2 = { version = "1.0", optional = true }  # 新增(可选)
@@ -325,7 +325,7 @@ write_path(ds, path)
 - `ncases` 已知(内存 Dataset)→ 直接写;避免 seek-back。
 - `weight_index`:写出权重变量的字典索引(含续条计数),待 §8 校准。
 - `creation_date/time`:`01 Jan 70 00:00:00`(不引入 chrono 到默认路径;
-  `datetime` feature 已存在,但 `.sav` 时间戳不是优先级,第一版写占位)。
+  `datetime` feature 已移除,`sav` 时间戳不是优先级,第一版写占位)。
 
 ### 7.3 字节码编码
 

@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "crates/socstat-mcp"]
+resolver = "3"
+
 [package]
 name = "socstat"
 version = "0.1.0"

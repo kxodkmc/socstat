@@ -1,0 +1,30 @@
+[package]
+name = "socstat-mcp"
+version = "0.1.0"
+edition = "2024"
+description = "An AI-friendly MCP server exposing socstat's statistical analysis as tools"
+license = "MIT"
+
+# `socstat-mcp` is an optional workspace member: build it only when you want the
+# MCP server. The core `socstat` crate stays lightweight and never compiles rmcp/tokio.
+[features]
+default = ["csv"]
+csv = ["socstat/csv"]
+sav = ["socstat/sav"]
+full = ["csv", "sav"]
+
+[dependencies]
+socstat = { path = "../..", default-features = false }
+rmcp = { version = "3.1.2", features = ["server", "macros", "schemars", "transport-io"] }
+schemars = "1.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[lib]
+name = "socstat_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "socstat-mcp"
+path = "src/main.rs"

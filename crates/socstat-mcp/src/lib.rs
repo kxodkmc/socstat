@@ -29,7 +29,7 @@ pub use state::SharedState;
 mod tests {
     use socstat::data::{Dataset, Value, Variable};
 
-    use crate::tools::{data, describe, transform};
+    use crate::tools::{anova, data, describe, multivariate, normality, regression, tests, transform};
     use crate::SharedState;
 
     fn sample_state() -> SharedState {
@@ -170,5 +170,278 @@ mod tests {
             right: transform::Operand::Constant(2.0),
         };
         assert!(transform::compute(&sample_state(), req).is_err());
+    }
+
+    // --- Verification tests for the newly exposed analysis tools -----------
+
+    fn paired_state() -> SharedState {
+        let mut ds = Dataset::new();
+        ds.add_var(Variable::numeric("pre")).unwrap();
+        ds.add_var(Variable::numeric("post")).unwrap();
+        for (pre, post) in [(5.0, 6.0), (6.0, 7.0), (7.0, 9.0), (4.0, 5.0), (8.0, 8.0)] {
+            ds.push_row(vec![Value::Number(pre), Value::Number(post)]).unwrap();
+        }
+        let state = SharedState::new();
+        state.load("pair".into(), ds);
+        state
+    }
+
+    #[test]
+    fn paired_t_test_reports_mean_difference() {
+        let req = tests::TwoVarRequest {
+            dataset: "pair".into(),
+            var1: "pre".into(),
+            var2: "post".into(),
+        };
+        let out = tests::paired_t_test(&paired_state(), req).unwrap();
+        assert!(out["n"].as_f64().unwrap() > 0.0);
+        assert!(out["t_statistic"].as_f64().unwrap().is_finite());
+        assert!(out["p_value"].as_f64().unwrap().is_finite());
+    }
+
+    #[test]
+    fn wilcoxon_signed_rank_needs_ten_differences() {
+        // Only 5 paired rows -> fewer than 10 non-zero differences -> error.
+        let req = tests::TwoVarRequest {
+            dataset: "pair".into(),
+            var1: "pre".into(),
+            var2: "post".into(),
+        };
+        assert!(tests::wilcoxon_signed_rank_test(&paired_state(), req).is_err());
+    }
+
+    #[test]
+    fn fisher_exact_accepts_valid_alternative() {
+        let mut ds = Dataset::new();
+        ds.add_var(Variable::text("g").value_label("A", "A").value_label("B", "B")).unwrap();
+        ds.add_var(Variable::text("h").value_label("X", "X").value_label("Y", "Y")).unwrap();
+        for (g, h) in [("A", "X"), ("A", "Y"), ("B", "X"), ("B", "Y"), ("A", "X")] {
+            ds.push_row(vec![Value::Text(g.into()), Value::Text(h.into())]).unwrap();
+        }
+        let state = SharedState::new();
+        state.load("t".into(), ds);
+        let req = tests::FisherRequest {
+            dataset: "t".into(),
+            var1: "g".into(),
+            var2: "h".into(),
+            alternative: "two-sided".into(),
+        };
+        let out = tests::fisher_exact_test(&state, req).unwrap();
+        assert!(out["odds_ratio"].as_f64().unwrap().is_finite());
+        assert!(out["p_value_two_sided"].as_f64().unwrap().is_finite());
+    }
+
+    #[test]
+    fn fisher_exact_rejects_bad_alternative() {
+        let state = paired_state();
+        let req = tests::FisherRequest {
+            dataset: "pair".into(),
+            var1: "pre".into(),
+            var2: "post".into(),
+            alternative: "sideways".into(), // invalid
+        };
+        assert!(tests::fisher_exact_test(&state, req).is_err());
+    }
+
+    fn grouped_state() -> SharedState {
+        let mut ds = Dataset::new();
+        ds.add_var(Variable::numeric("score")).unwrap();
+        ds.add_var(Variable::text("group")).unwrap();
+        for (score, group) in [
+            (1.0, "a"), (2.0, "a"), (3.0, "a"),
+            (11.0, "b"), (12.0, "b"), (13.0, "b"),
+            (21.0, "c"), (22.0, "c"), (23.0, "c"),
+        ] {
+            ds.push_row(vec![Value::Number(score), Value::Text(group.into())]).unwrap();
+        }
+        let state = SharedState::new();
+        state.load("grp".into(), ds);
+        state
+    }
+
+    #[test]
+    fn kruskal_wallis_reports_groups() {
+        let req = tests::ByGroupRequest {
+            dataset: "grp".into(),
+            dep_var: "score".into(),
+            group_var: "group".into(),
+        };
+        let out = tests::kruskal_wallis_test(&grouped_state(), req).unwrap();
+        assert_eq!(out["group_stats"].as_array().unwrap().len(), 3);
+        assert!(out["h_statistic"].as_f64().unwrap().is_finite());
+    }
+
+    #[test]
+    fn shapiro_wilk_reports_w_statistic() {
+        let state = grouped_state();
+        let req = describe::VarRequest { dataset: "grp".into(), var: "score".into() };
+        let out = normality::shapiro_wilk(&state, req).unwrap();
+        assert!(out["w_statistic"].as_f64().unwrap() > 0.0);
+        assert!(out["p_value"].as_f64().unwrap().is_finite());
+    }
+
+    #[test]
+    fn ks_normality_supports_both_modes() {
+        let state = grouped_state();
+        let lillie = normality::KsRequest {
+            dataset: "grp".into(),
+            var: "score".into(),
+            test_type: "lilliefors".into(),
+            mean: 0.0,
+            std_dev: 1.0,
+        };
+        assert!(normality::ks_normality_test(&state, lillie).unwrap()["d_statistic"].as_f64().unwrap() > 0.0);
+        let one = normality::KsRequest {
+            dataset: "grp".into(),
+            var: "score".into(),
+            test_type: "one_sample".into(),
+            mean: 10.0,
+            std_dev: 8.0,
+        };
+        assert!(normality::ks_normality_test(&state, one).is_ok());
+        // Invalid test_type must error, not silently pass.
+        let bad = normality::KsRequest {
+            dataset: "grp".into(),
+            var: "score".into(),
+            test_type: "watson".into(),
+            mean: 0.0,
+            std_dev: 1.0,
+        };
+        assert!(normality::ks_normality_test(&state, bad).is_err());
+    }
+
+    #[test]
+    fn post_hoc_returns_comparisons() {
+        let req = anova::PostHocRequest {
+            dataset: "grp".into(),
+            dep_var: "score".into(),
+            factor_var: "group".into(),
+            method: "tukey".into(),
+        };
+        let out = anova::post_hoc(&grouped_state(), req).unwrap();
+        assert_eq!(out["comparisons"].as_array().unwrap().len(), 3); // 3 pairs
+        assert_eq!(out["n_groups"].as_u64().unwrap(), 3);
+        assert!(out["comparisons"][0]["p_value"].as_f64().unwrap().is_finite());
+    }
+
+    #[test]
+    fn post_hoc_distinguishes_valid_and_invalid_methods() {
+        let state = grouped_state();
+        let ok = anova::PostHocRequest {
+            dataset: "grp".into(),
+            dep_var: "score".into(),
+            factor_var: "group".into(),
+            method: "bonferroni".into(),
+        };
+        assert!(anova::post_hoc(&state, ok).is_ok());
+        let bad = anova::PostHocRequest {
+            dataset: "grp".into(),
+            dep_var: "score".into(),
+            factor_var: "group".into(),
+            method: "fisher".into(),
+        };
+        assert!(anova::post_hoc(&state, bad).is_err());
+    }
+
+    fn factorial_state() -> SharedState {
+        let mut ds = Dataset::new();
+        ds.add_var(Variable::text("a")).unwrap();
+        ds.add_var(Variable::text("b")).unwrap();
+        ds.add_var(Variable::numeric("y")).unwrap();
+        for (a, b, y) in [
+            ("1", "1", 10.0), ("1", "1", 11.0),
+            ("1", "2", 20.0), ("1", "2", 21.0),
+            ("2", "1", 30.0), ("2", "1", 31.0),
+            ("2", "2", 40.0), ("2", "2", 41.0),
+        ] {
+            ds.push_row(vec![Value::Text(a.into()), Value::Text(b.into()), Value::Number(y)])
+                .unwrap();
+        }
+        let state = SharedState::new();
+        state.load("fact".into(), ds);
+        state
+    }
+
+    #[test]
+    fn factorial_anova_reports_effects() {
+        let req = anova::FactorialAnovaRequest {
+            dataset: "fact".into(),
+            dep_var: "y".into(),
+            factors: vec!["a".into(), "b".into()],
+            ss_type: "type_ii".into(),
+        };
+        let out = anova::factorial_anova(&factorial_state(), req).unwrap();
+        let effects = out["effects"].as_array().unwrap();
+        assert!(effects.iter().any(|e| e["source"] == "Error"));
+        assert!(out["r_squared"].as_f64().unwrap() > 0.0);
+        // Invalid ss_type must error.
+        let bad = anova::FactorialAnovaRequest {
+            dataset: "fact".into(),
+            dep_var: "y".into(),
+            factors: vec!["a".into(), "b".into()],
+            ss_type: "type_iii".into(),
+        };
+        assert!(anova::factorial_anova(&factorial_state(), bad).is_err());
+    }
+
+    fn regression_state() -> SharedState {
+        let mut ds = Dataset::new();
+        ds.add_var(Variable::numeric("y")).unwrap();
+        ds.add_var(Variable::numeric("x")).unwrap();
+        ds.add_var(Variable::numeric("c")).unwrap();
+        ds.add_var(Variable::numeric("d")).unwrap();
+        let u = [0.3, -0.4, 0.5, -0.2, 0.3, -0.5, 0.4, -0.3];
+        let v = [-0.3, 0.5, -0.4, 0.6, -0.5, 0.4, -0.6, 0.5];
+        for i in 1..=8 {
+            let c = i as f64;
+            ds.push_row(vec![
+                Value::Number(c + 1.3 + v[i - 1]),
+                Value::Number(c + 1.3 + u[i - 1]),
+                Value::Number(c),
+                Value::Number((i % 3) as f64),
+            ])
+            .unwrap();
+        }
+        let state = SharedState::new();
+        state.load("reg".into(), ds);
+        state
+    }
+
+    #[test]
+    fn vif_returns_one_row_per_predictor() {
+        let req = multivariate::VarsRequest {
+            dataset: "reg".into(),
+            vars: vec!["x".into(), "c".into(), "d".into()],
+        };
+        let out = regression::vif(&regression_state(), req).unwrap();
+        let rows = out.as_array().unwrap();
+        assert_eq!(rows.len(), 3);
+        for r in rows {
+            assert!(r["vif"].as_f64().unwrap() >= 1.0);
+            assert!(r["vif"].as_f64().unwrap().is_finite());
+        }
+    }
+
+    #[test]
+    fn partial_correlation_controls_for_confounder() {
+        let req = regression::PartialCorrRequest {
+            dataset: "reg".into(),
+            var1: "y".into(),
+            var2: "x".into(),
+            controls: vec!["c".into()],
+            method: "pearson".into(),
+        };
+        let out = regression::partial_correlation(&regression_state(), req).unwrap();
+        assert_eq!(out["controlling_for"], serde_json::json!(["c"]));
+        assert!(out["coefficient"].as_f64().unwrap().abs() <= 1.0);
+        // Empty controls list must error (core expects at least one).
+        let bad = regression::PartialCorrRequest {
+            dataset: "reg".into(),
+            var1: "y".into(),
+            var2: "x".into(),
+            controls: vec![],
+            method: "pearson".into(),
+        };
+        assert!(regression::partial_correlation(&regression_state(), bad).is_err());
     }
 }

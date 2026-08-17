@@ -5,9 +5,11 @@
 //! call. Keeping the logic here (instead of inside the macros) keeps the server
 //! declaration thin and the analysis code unit-testable.
 
+pub mod anova;
 pub mod data;
 pub mod describe;
 pub mod multivariate;
+pub mod normality;
 pub mod regression;
 pub mod tests;
 pub mod transform;

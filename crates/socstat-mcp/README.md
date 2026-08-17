@@ -36,7 +36,7 @@ MCP 工具调用本身是无状态的。socstat-mcp 通过一个**共享、有�
   AI 主机 (Claude/   │  stdio  (stdin / stdout)                     │
   Cursor/ ... ) ────▶│                                               │
                     │  +------------------+                          │
-                    │  |  SocstatMcpServer|  (24 个 tool)            │
+                    │  |  SocstatMcpServer|  (34 个 tool)            │
                     │  +--------+---------+                          │
                     │           │                                    │
                     │  +--------v---------+                          │
@@ -101,7 +101,7 @@ socstat-mcp
 
 ## 工具参考
 
-共 **24 个工具**，按功能分组。除 `list_datasets` 外，其余工具均需 `dataset` 参数（已加载的数据集名称）。
+共 **34 个工具**，按功能分组。除 `list_datasets` 外，其余工具均需 `dataset` 参数（已加载的数据集名称）。
 
 ### 数据管理
 
@@ -147,6 +147,24 @@ socstat-mcp
 | `one_way_anova` | `dataset`, `dep_var`, `group_var` | 单因素 ANOVA |
 | `chi_square_test` | `dataset`, `var1`, `var2` | 两分类变量的卡方独立性检验 |
 | `mann_whitney_u_test` | `dataset`, `dep_var`, `group_var` | Mann–Whitney U 非参数检验 |
+| `paired_t_test` | `dataset`, `var1`, `var2` | 配对样本 t 检验（每一行为一对观测） |
+| `fisher_exact_test` | `dataset`, `var1`, `var2`, `alternative` | 2×2 表 Fisher 精确检验（`alternative`: `two-sided` / `less` / `greater`） |
+| `wilcoxon_signed_rank_test` | `dataset`, `var1`, `var2` | 配对观测的 Wilcoxon 符号秩检验（需 ≥10 个非零差值） |
+| `kruskal_wallis_test` | `dataset`, `dep_var`, `group_var` | Kruskal–Wallis H 非参数检验（2+ 组） |
+
+### 正态性检验
+
+| 工具 | 参数 | 说明 |
+|------|------|------|
+| `shapiro_wilk` | `dataset`, `var` | 数值变量的 Shapiro–Wilk 正态性检验（Royston AS R94） |
+| `ks_normality_test` | `dataset`, `var`, `test_type`, `mean`, `std_dev` | 单样本 K-S 正态性检验（`test_type`: `lilliefors` 或 `one_sample`） |
+
+### ANOVA 后续检验与多因素 ANOVA
+
+| 工具 | 参数 | 说明 |
+|------|------|------|
+| `post_hoc` | `dataset`, `dep_var`, `factor_var`, `method` | ANOVA 事后多重比较（`method`: `bonferroni` / `tukey` / `scheffe`） |
+| `factorial_anova` | `dataset`, `dep_var`, `factors[]`, `ss_type` | 多因素（析因）ANOVA，含二阶交互（`ss_type`: `type_i` / `type_ii`） |
 
 ### 相关与回归
 
@@ -154,6 +172,8 @@ socstat-mcp
 |------|------|------|
 | `correlation_pair` | `dataset`, `var1`, `var2`, `method` | 两变量的相关系数（`pearson` / `spearman` / `kendall`） |
 | `correlation` | `dataset`, `vars[]`, `method` | 给定变量两两之间的相关矩阵（上三角） |
+| `vif` | `dataset`, `vars[]` | 方差膨胀因子（多重共线性诊断，需 ≥2 个预测变量） |
+| `partial_correlation` | `dataset`, `var1`, `var2`, `controls[]`, `method` | 控制变量的偏相关（残差法，`controls` 至少 1 个） |
 | `linear_regression` | `dataset`, `dep_var`, `indep_vars[]` | 线性回归（OLS，恒含截距） |
 | `logistic_regression` | `dataset`, `dep_var`, `indep_vars[]` | 二元逻辑回归（因变量须为 0/1） |
 

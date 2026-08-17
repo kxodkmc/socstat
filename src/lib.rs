@@ -30,6 +30,22 @@
 //!     // Filter cases
 //!     ds.filter(|row| row.numeric("age") > Some(18.0))?;
 //!
+//!     // Hypothesis testing
+//!     let t = ds.independent_t_test("income", "gender")?;
+//!     println!("t = {:.3}, p = {:.5}", t.equal_variances.t_statistic, t.equal_variances.p_value);
+//!
+//!     // Normality check (Shapiro–Wilk)
+//!     let sw = ds.shapiro_wilk("income")?;
+//!     println!("Shapiro–Wilk W = {:.4}, p = {:.5}", sw.w_statistic, sw.p_value);
+//!
+//!     // Multifactor ANOVA with Type II sums of squares
+//!     let aov = ds.factorial_anova("income", &["gender", "education"], SsType::TypeII)?;
+//!     for eff in &aov.effects {
+//!         if let (Some(f), Some(p)) = (eff.f, eff.p_value) {
+//!             println!("{}: F = {:.3}, p = {:.5}", eff.source, f, p);
+//!         }
+//!     }
+//!
 //!     socstat::write().json(&ds, "out.json")?;
 //!     Ok(())
 //! }
@@ -62,12 +78,13 @@ pub mod prelude {
     };
     pub use crate::error::{SocStatError, SocStatResult};
     pub use crate::stats::{
-        Alternative, ChiSquareTest, Coefficient, ConfusionMatrix, CorrelationMethod, CorrelationPair,
-        CorrelationResult, Crosstab, Descriptive, FisherExactTest, FrequencyRow, FrequencyTable,
-        IndependentTTest, KolmogorovSmirnovResult, KruskalWallisResult, KsTestType,
-        LinearRegressionResult, LogisticCoefficient, LogisticRegressionResult, MannWhitneyUTest,
-        OneWayAnova, PairedTTest, PartialCorrelationResult, PcaMatrix, PcaResult, PostHocMethod,
-        PostHocResult, ReliabilityResult, ShapiroWilkResult, StatsExt, TTestModel, VifResult,
+        Alternative, AnovaEffect, ChiSquareTest, Coefficient, ConfusionMatrix, CorrelationMethod,
+        CorrelationPair, CorrelationResult, Crosstab, Descriptive, FactorialAnova, FisherExactTest,
+        FrequencyRow, FrequencyTable, IndependentTTest, KolmogorovSmirnovResult,
+        KruskalWallisResult, KsTestType, LinearRegressionResult, LogisticCoefficient,
+        LogisticRegressionResult, MannWhitneyUTest, OneWayAnova, PairedTTest,
+        PartialCorrelationResult, PcaMatrix, PcaResult, PostHocMethod, PostHocResult,
+        ReliabilityResult, ShapiroWilkResult, SsType, StatsExt, TTestModel, VifResult,
         WilcoxonSignedRankResult,
     };
     pub use crate::{read, write};

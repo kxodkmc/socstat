@@ -1,4 +1,5 @@
-//! Hypothesis-testing tools: t-test, ANOVA, chi-square, Mann–Whitney U.
+//! Hypothesis-testing tools: t-tests, ANOVA, chi-square, Mann–Whitney U,
+//! paired t-test, Fisher's exact, Wilcoxon signed-rank, Kruskal–Wallis.
 
 use rmcp::schemars::JsonSchema;
 use serde::Deserialize;
@@ -53,4 +54,66 @@ pub fn chi_square_test(state: &SharedState, req: TwoVarRequest) -> Result<Value,
 pub fn mann_whitney_u_test(state: &SharedState, req: ByGroupRequest) -> Result<Value, String> {
     let ds = state.require(&req.dataset)?;
     to_value(&ds.mann_whitney_u_test(&req.dep_var, &req.group_var).map_err(|e| e.to_string())?)
+}
+
+/// Parameters for Fisher's exact test.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FisherRequest {
+    /// Dataset name.
+    pub dataset: String,
+    /// First (categorical) variable.
+    pub var1: String,
+    /// Second (categorical) variable.
+    pub var2: String,
+    /// Alternative hypothesis: `two-sided` (default), `less`, or `greater`.
+    /// socstat reports all three p-values regardless of this choice.
+    #[schemars(default = "default_alternative")]
+    pub alternative: String,
+}
+
+fn default_alternative() -> String { "two-sided".into() }
+
+fn parse_alternative(s: &str) -> Result<Alternative, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "two-sided" | "two_sided" | "twosided" => Ok(Alternative::TwoSided),
+        "less" => Ok(Alternative::Less),
+        "greater" => Ok(Alternative::Greater),
+        other => Err(format!(
+            "unknown alternative '{other}'; expected 'two-sided', 'less', or 'greater'"
+        )),
+    }
+}
+
+/// Paired-samples t-test of the mean difference between two numeric variables
+/// (each row is one paired observation).
+pub fn paired_t_test(state: &SharedState, req: TwoVarRequest) -> Result<Value, String> {
+    let ds = state.require(&req.dataset)?;
+    to_value(&ds.paired_t_test(&req.var1, &req.var2).map_err(|e| e.to_string())?)
+}
+
+/// Fisher's exact test of independence on a 2×2 table, from two categorical
+/// variables that each have exactly two categories.
+pub fn fisher_exact_test(state: &SharedState, req: FisherRequest) -> Result<Value, String> {
+    let ds = state.require(&req.dataset)?;
+    let alternative = parse_alternative(&req.alternative)?;
+    to_value(
+        &ds.fisher_exact_test(&req.var1, &req.var2, alternative).map_err(|e| e.to_string())?,
+    )
+}
+
+/// Wilcoxon signed-rank test on paired observations of two numeric variables
+/// (nonparametric).
+pub fn wilcoxon_signed_rank_test(
+    state: &SharedState,
+    req: TwoVarRequest,
+) -> Result<Value, String> {
+    let ds = state.require(&req.dataset)?;
+    to_value(&ds.wilcoxon_signed_rank_test(&req.var1, &req.var2).map_err(|e| e.to_string())?)
+}
+
+/// Kruskal–Wallis H test of `dep_var` across the groups of `group_var`
+/// (nonparametric, for 2+ groups).
+pub fn kruskal_wallis_test(state: &SharedState, req: ByGroupRequest) -> Result<Value, String> {
+    let ds = state.require(&req.dataset)?;
+    to_value(&ds.kruskal_wallis_test(&req.dep_var, &req.group_var).map_err(|e| e.to_string())?)
 }

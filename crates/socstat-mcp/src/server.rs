@@ -13,7 +13,7 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::state::SharedState;
-use crate::tools::{data, describe, multivariate, regression, tests, transform};
+use crate::tools::{anova, data, describe, multivariate, normality, regression, tests, transform};
 
 /// The MCP service. Holds shared, stateful dataset storage.
 ///
@@ -203,6 +203,62 @@ impl SocstatMcpServer {
         Ok(Json(tests::mann_whitney_u_test(&self.state, req)?))
     }
 
+    #[tool(
+        description = "Paired-samples t-test of the mean difference between two numeric variables (each row is one paired observation)",
+        annotations(title = "Paired t-test", read_only_hint = true)
+    )]
+    pub async fn paired_t_test(&self, Parameters(req): Parameters<tests::TwoVarRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(tests::paired_t_test(&self.state, req)?))
+    }
+
+    #[tool(
+        description = "Fisher's exact test of independence on a 2x2 table from two categorical variables that each have exactly two categories (alternative: two-sided, less, or greater)",
+        annotations(title = "Fisher's exact test", read_only_hint = true)
+    )]
+    pub async fn fisher_exact_test(&self, Parameters(req): Parameters<tests::FisherRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(tests::fisher_exact_test(&self.state, req)?))
+    }
+
+    #[tool(
+        description = "Wilcoxon signed-rank test on paired observations of two numeric variables (nonparametric)",
+        annotations(title = "Wilcoxon signed-rank", read_only_hint = true)
+    )]
+    pub async fn wilcoxon_signed_rank_test(&self, Parameters(req): Parameters<tests::TwoVarRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(tests::wilcoxon_signed_rank_test(&self.state, req)?))
+    }
+
+    #[tool(
+        description = "Kruskal-Wallis H test of a numeric variable across the groups of a factor (nonparametric, 2+ groups)",
+        annotations(title = "Kruskal-Wallis", read_only_hint = true)
+    )]
+    pub async fn kruskal_wallis_test(&self, Parameters(req): Parameters<tests::ByGroupRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(tests::kruskal_wallis_test(&self.state, req)?))
+    }
+
+    // --- Normality tests ---------------------------------------------------
+
+    #[tool(
+        description = "Shapiro-Wilk test of normality for a numeric variable",
+        annotations(title = "Shapiro-Wilk", read_only_hint = true)
+    )]
+    pub async fn shapiro_wilk(&self, Parameters(req): Parameters<describe::VarRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(normality::shapiro_wilk(&self.state, req)?))
+    }
+
+    #[tool(
+        description = "One-sample Kolmogorov-Smirnov normality test (test_type: lilliefors or one_sample; one_sample needs mean and std_dev)",
+        annotations(title = "Kolmogorov-Smirnov test", read_only_hint = true)
+    )]
+    pub async fn ks_normality_test(&self, Parameters(req): Parameters<normality::KsRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(normality::ks_normality_test(&self.state, req)?))
+    }
+
     // --- Correlation & regression ------------------------------------------
 
     #[tool(
@@ -239,6 +295,44 @@ impl SocstatMcpServer {
     pub async fn logistic_regression(&self, Parameters(req): Parameters<regression::RegressionRequest>) -> Result<Json<Value>, String> {
         let _guard = self.gate.lock().await;
         Ok(Json(regression::logistic_regression(&self.state, req)?))
+    }
+
+    #[tool(
+        description = "Variance inflation factors for the given predictors (multicollinearity diagnostics; needs at least two predictors)",
+        annotations(title = "Variance inflation factors", read_only_hint = true)
+    )]
+    pub async fn vif(&self, Parameters(req): Parameters<multivariate::VarsRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(regression::vif(&self.state, req)?))
+    }
+
+    #[tool(
+        description = "Partial correlation of two variables whilst controlling for one or more control variables (method: pearson, spearman, or kendall)",
+        annotations(title = "Partial correlation", read_only_hint = true)
+    )]
+    pub async fn partial_correlation(&self, Parameters(req): Parameters<regression::PartialCorrRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(regression::partial_correlation(&self.state, req)?))
+    }
+
+    // --- ANOVA follow-ups & multifactor ANOVA ------------------------------
+
+    #[tool(
+        description = "ANOVA post-hoc comparisons of a numeric variable across the groups of a factor (method: bonferroni, tukey, or scheffe)",
+        annotations(title = "Post-hoc comparisons", read_only_hint = true)
+    )]
+    pub async fn post_hoc(&self, Parameters(req): Parameters<anova::PostHocRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(anova::post_hoc(&self.state, req)?))
+    }
+
+    #[tool(
+        description = "Multifactor (factorial) ANOVA of a numeric variable on two or more factors with two-way interactions (ss_type: type_i or type_ii)",
+        annotations(title = "Factorial ANOVA", read_only_hint = true)
+    )]
+    pub async fn factorial_anova(&self, Parameters(req): Parameters<anova::FactorialAnovaRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(anova::factorial_anova(&self.state, req)?))
     }
 
     // --- Multivariate -------------------------------------------------------

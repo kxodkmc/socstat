@@ -44,6 +44,24 @@ pub struct RegressionRequest {
     pub indep_vars: Vec<String>,
 }
 
+/// Parameters for a partial correlation of two variables.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PartialCorrRequest {
+    /// Dataset name.
+    pub dataset: String,
+    /// First numeric variable.
+    pub var1: String,
+    /// Second numeric variable.
+    pub var2: String,
+    /// Numeric control variables to partial out (at least one).
+    pub controls: Vec<String>,
+    /// Correlation method: `pearson`, `spearman`, or `kendall`.
+    #[schemars(default = "default_method")]
+    pub method: String,
+}
+
+fn default_method() -> String { "pearson".into() }
+
 fn parse_method(s: &str) -> Result<CorrelationMethod, String> {
     match s.to_ascii_lowercase().as_str() {
         "pearson" => Ok(CorrelationMethod::Pearson),
@@ -82,4 +100,27 @@ pub fn logistic_regression(state: &SharedState, req: RegressionRequest) -> Resul
     let ds = state.require(&req.dataset)?;
     let vars: Vec<&str> = req.indep_vars.iter().map(|s| s.as_str()).collect();
     to_value(&ds.logistic_regression(&req.dep_var, &vars).map_err(|e| e.to_string())?)
+}
+
+/// Variance inflation factors for the given predictor variables (multicollinearity
+/// diagnostics; require at least two predictors).
+pub fn vif(
+    state: &SharedState,
+    req: super::multivariate::VarsRequest,
+) -> Result<Value, String> {
+    let ds = state.require(&req.dataset)?;
+    let vars: Vec<&str> = req.vars.iter().map(|s| s.as_str()).collect();
+    to_value(&ds.vif(&vars).map_err(|e| e.to_string())?)
+}
+
+/// Partial correlation of `var1` and `var2` whilst controlling for `controls`
+/// (residual method).
+pub fn partial_correlation(state: &SharedState, req: PartialCorrRequest) -> Result<Value, String> {
+    let ds = state.require(&req.dataset)?;
+    let method = parse_method(&req.method)?;
+    let controls: Vec<&str> = req.controls.iter().map(|s| s.as_str()).collect();
+    to_value(
+        &ds.partial_correlation(&req.var1, &req.var2, &controls, method)
+            .map_err(|e| e.to_string())?,
+    )
 }

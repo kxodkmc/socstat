@@ -2,8 +2,23 @@
 //! hypothesis testing, correlation, linear and logistic regression, plus
 //! multivariate analysis (PCA and reliability).
 //!
-//! The [`StatsExt`] trait extends [`Dataset`](crate::data::Dataset) with
-//! analysis methods. Statistics automatically use case weights when set.
+//! The [`StatsExt`] trait extends [`Dataset`] with the main analysis methods.
+//! Statistics automatically use case weights when set.
+//!
+//! ## Capabilities
+//!
+//! - **Descriptive** (`descriptive`), **frequencies**, **crosstab**.
+//! - **Tests** ([`tests`]): independent & paired `t`, one-way ANOVA,
+//!   chi-square, Mann–Whitney U, Wilcoxon signed-rank, Fisher's exact,
+//!   Kruskal–Wallis.
+//! - **Normality** ([`normality`]): Shapiro–Wilk and one-sample
+//!   Kolmogorov–Smirnov (including Lilliefors).
+//! - **Correlation & collinearity** ([`regression`]): Pearson / Spearman /
+//!   Kendall, VIF, partial correlation, and (multi)linear & logistic
+//!   regression.
+//! - **ANOVA follow-ups** ([`posthoc`]): Bonferroni, Tukey HSD, Scheffé.
+//! - **Multifactor ANOVA** ([`anova`]): Type I / Type II sums of squares.
+//! - **Multivariate** ([`multivariate`]): PCA and Cronbach's α reliability.
 //!
 //! ## Weights
 //!
@@ -23,10 +38,13 @@
 //! let cross = ds.crosstab("gender", "education")?;
 //! let t = ds.independent_t_test("income", "gender")?;
 //! println!("t = {:.3}, p = {:.5}", t.equal_variances.t_statistic, t.equal_variances.p_value);
+//! let sw = ds.shapiro_wilk("income")?; // normality check
+//! let aov = ds.factorial_anova("income", &["gender", "education"], SsType::TypeII)?;
 //! # Ok(())
 //! }
 //! ```
 
+pub mod anova;
 pub mod crosstab;
 pub mod descriptive;
 pub mod frequencies;
@@ -38,6 +56,7 @@ pub mod regression;
 pub(crate) mod shared;
 pub mod tests;
 
+pub use anova::{AnovaEffect, FactorialAnova, SsType};
 pub use crosstab::Crosstab;
 pub use descriptive::Descriptive;
 pub use frequencies::{FrequencyRow, FrequencyTable};
@@ -330,6 +349,19 @@ pub trait StatsExt {
     /// for every pair of groups.
     fn post_hoc(&self, dep_var: &str, factor_var: &str, method: PostHocMethod)
         -> SocStatResult<PostHocResult>;
+
+    /// Multifactor (factorial) ANOVA of `dep_var` on two or more factors.
+    ///
+    /// Factors are dummy-coded with all two-way interactions; `ss_type` selects
+    /// Type I (sequential) or Type II (marginal) sums of squares. Reports each
+    /// effect's SS/df/MS/F, η² and partial-η², plus the overall model fit.
+    /// See [`factorial_anova`](crate::stats::anova::factorial_anova).
+    fn factorial_anova(
+        &self,
+        dep_var: &str,
+        factors: &[&str],
+        ss_type: SsType,
+    ) -> SocStatResult<FactorialAnova>;
 }
 
 impl StatsExt for Dataset {
@@ -601,6 +633,15 @@ impl StatsExt for Dataset {
         let factor = self.column_by_name(factor_var)?;
         let groups = shared::split_groups(dep, factor, self.weights().as_deref())?;
         posthoc::post_hoc(&groups, aov.within_groups.ms, aov.within_groups.df, method)
+    }
+
+    fn factorial_anova(
+        &self,
+        dep_var: &str,
+        factors: &[&str],
+        ss_type: SsType,
+    ) -> SocStatResult<FactorialAnova> {
+        anova::factorial_anova(self, dep_var, factors, ss_type)
     }
 }
 

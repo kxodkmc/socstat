@@ -13,13 +13,16 @@
 //! Every public result struct derives `Serialize`/`Deserialize` so hosts can
 //! ship results as JSON/FFI payloads (Hard Rule 1).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::data::ColumnData;
 use crate::dist::{ChiSquaredDist, Distribution, FDist, NormalDist, StudentsTDist};
 use crate::error::{SocStatError, SocStatResult};
+use crate::stats::shared::*;
+
+use super::regression::pearson;
 
 // ---------------------------------------------------------------------------
 // Result structs (Hard Rule 1: all serializable)
@@ -150,156 +153,10 @@ pub struct MannWhitneyUTest {
 }
 
 // ---------------------------------------------------------------------------
-// Numerically stable weighted summaries
+// Shared helpers (numeric summaries, group splitting, ranking, pairing) live
+// in [`super::shared`]; `group_summary` stays here as it returns the local
+// [`GroupSummary`].
 // ---------------------------------------------------------------------------
-
-/// Weighted summary statistics computed with a two-pass algorithm.
-///
-/// Pass 1 computes the weighted mean; pass 2 accumulates weighted squared
-/// deviations around the mean. This is numerically stable for data with a
-/// large mean and a tiny variance (catastrophic cancellation avoided).
-#[derive(Debug, Clone)]
-struct WeightedSummary {
-    /// Effective sample size (sum of weights).
-    n: f64,
-    mean: f64,
-    /// Sum of squared deviations around the mean (weighted).
-    sum_squares: f64,
-    min: f64,
-    max: f64,
-}
-
-impl WeightedSummary {
-    /// Compute from (value, weight) pairs. Pairs with a non-positive weight
-    /// or a non-finite value are excluded.
-    fn compute(pairs: &[(f64, f64)]) -> SocStatResult<Self> {
-        let mut n_valid = 0usize;
-        let mut sum_w = 0.0;
-        let mut sum_wx = 0.0;
-        let (mut min, mut max) = (f64::INFINITY, f64::NEG_INFINITY);
-
-        for &(x, w) in pairs {
-            if !x.is_finite() || !positive_weight(w) {
-                continue;
-            }
-            n_valid += 1;
-            sum_w += w;
-            sum_wx += w * x;
-            min = min.min(x);
-            max = max.max(x);
-        }
-
-        if n_valid == 0 {
-            return Err(SocStatError::InsufficientData(
-                "no valid (weighted) cases to analyze".into(),
-            ));
-        }
-
-        let mean = sum_wx / sum_w;
-        let mut sum_squares = 0.0;
-        for &(x, w) in pairs {
-            if !x.is_finite() || !positive_weight(w) {
-                continue;
-            }
-            let d = x - mean;
-            sum_squares += w * d * d;
-        }
-
-        Ok(Self { n: sum_w, mean, sum_squares, min, max })
-    }
-
-    /// Sample variance (denominator n−1).
-    fn variance(&self) -> f64 {
-        if self.n > 1.0 {
-            self.sum_squares / (self.n - 1.0)
-        } else {
-            0.0
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
-/// One group split out of the dependent variable.
-#[derive(Debug, Clone)]
-struct GroupedData {
-    label: String,
-    /// (value, weight) pairs, weight already validated > 0.
-    pairs: Vec<(f64, f64)>,
-}
-
-fn format_num(x: f64) -> String {
-    if x.fract() == 0.0 {
-        format!("{}", x as i64)
-    } else {
-        format!("{}", x)
-    }
-}
-
-/// True for a usable frequency weight: finite and strictly positive.
-/// NaN weights must be excluded rather than silently treated as valid.
-fn positive_weight(w: f64) -> bool {
-    w.is_finite() && w > 0.0
-}
-
-/// Split a numeric dependent column into groups by a grouping column,
-/// dropping rows where either value is missing or the weight is ≤ 0.
-fn split_groups(
-    dep: &ColumnData,
-    group: &ColumnData,
-    weights: Option<&[f64]>,
-) -> SocStatResult<Vec<GroupedData>> {
-    let dep_slice = dep.as_numeric().ok_or(SocStatError::TypeMismatch {
-        var: String::new(),
-        expected: "Numeric",
-        actual: "Text",
-    })?;
-    let n = dep_slice.len();
-    if n != group.len() {
-        return Err(SocStatError::ColumnLengthMismatch {
-            expected: n,
-            got: group.len(),
-        });
-    }
-    if let Some(w) = weights
-        && w.len() != n
-    {
-        return Err(SocStatError::ColumnLengthMismatch {
-            expected: n,
-            got: w.len(),
-        });
-    }
-
-    let group_labels: Vec<Option<String>> = match group {
-        ColumnData::Numeric(v) => v.iter().map(|o| o.map(format_num)).collect(),
-        ColumnData::Text(v) => v.clone(),
-    };
-
-    let mut groups: Vec<GroupedData> = Vec::new();
-    let mut index: BTreeMap<String, usize> = BTreeMap::new();
-
-    for i in 0..n {
-        let Some(x) = dep_slice[i] else { continue };
-        let Some(label) = &group_labels[i] else { continue };
-        let w = weights.map(|ws| ws[i]).unwrap_or(1.0);
-        if !positive_weight(w) {
-            continue;
-        }
-        let idx = if let Some(&idx) = index.get(label) {
-            idx
-        } else {
-            let idx = groups.len();
-            index.insert(label.clone(), idx);
-            groups.push(GroupedData { label: label.clone(), pairs: Vec::new() });
-            idx
-        };
-        groups[idx].pairs.push((x, w));
-    }
-
-    Ok(groups)
-}
 
 fn group_summary(label: &str, ws: &WeightedSummary) -> GroupSummary {
     let variance = ws.variance();
@@ -671,13 +528,6 @@ pub fn chi_square_test(
     })
 }
 
-fn extract_labels(col: &ColumnData) -> Vec<Option<String>> {
-    match col {
-        ColumnData::Numeric(v) => v.iter().map(|o| o.map(format_num)).collect(),
-        ColumnData::Text(v) => v.clone(),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Mann–Whitney U test
 // ---------------------------------------------------------------------------
@@ -791,9 +641,460 @@ pub fn mann_whitney_u_test(
     })
 }
 
-/// Two-sided tail probability for a symmetric distribution.
-fn two_sided_tail(dist: &impl Distribution, stat: f64) -> f64 {
-    2.0 * (1.0 - dist.cdf(stat.abs()))
+// ---------------------------------------------------------------------------
+// Paired-samples t-test
+// ---------------------------------------------------------------------------
+
+/// Result of a paired-samples t-test on the differences dᵢ = xᵢ − yᵢ.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairedTTest {
+    /// Effective sample size (sum of weights).
+    pub n: f64,
+    pub mean_difference: f64,
+    pub std_dev_difference: f64,
+    pub std_error: f64,
+    pub t_statistic: f64,
+    pub df: f64,
+    pub p_value: f64,
+    pub ci_95: (f64, f64),
+    /// Pearson correlation between the paired observations.
+    pub correlation: f64,
+}
+
+/// Paired-samples t-test of the mean difference between two numeric columns.
+///
+/// Drops rows where either value is missing or the weight is non-positive
+/// (pairwise), then runs a weighted one-sample t-test on dᵢ = xᵢ − yᵢ with
+/// df = n−1. Reports the Pearson correlation of the retained pairs.
+pub fn paired_t_test(
+    v1: &ColumnData,
+    v2: &ColumnData,
+    weights: Option<&[f64]>,
+) -> SocStatResult<PairedTTest> {
+    let s1 = v1.as_numeric().ok_or_else(|| SocStatError::TypeMismatch {
+        var: String::new(),
+        expected: "Numeric",
+        actual: "Text",
+    })?;
+    let s2 = v2.as_numeric().ok_or_else(|| SocStatError::TypeMismatch {
+        var: String::new(),
+        expected: "Numeric",
+        actual: "Text",
+    })?;
+    let paired = align_paired_slices(s1, s2, weights)?;
+    if paired.n < 2 {
+        return Err(SocStatError::InsufficientData(
+            "paired t-test needs at least 2 paired observations".into(),
+        ));
+    }
+    let n = paired.n as f64;
+    let has_w = !paired.weights.is_empty();
+    let wsum: f64 = if has_w { paired.weights.iter().sum() } else { n };
+
+    // Differences dᵢ = xᵢ − yᵢ and their weighted mean.
+    let d_bar: f64 = if has_w {
+        paired.v1.iter().zip(&paired.v2).zip(&paired.weights)
+            .map(|((&a, &b), &w)| (a - b) * w)
+            .sum::<f64>() / wsum
+    } else {
+        paired.v1.iter().zip(&paired.v2).map(|(&a, &b)| a - b).sum::<f64>() / n
+    };
+
+    // Weighted sum of squared deviations around the mean (two-pass, stable).
+    let sq: f64 = if has_w {
+        paired.v1.iter().zip(&paired.v2).zip(&paired.weights)
+            .map(|((&a, &b), &w)| w * (a - b - d_bar).powi(2))
+            .sum()
+    } else {
+        paired.v1.iter().zip(&paired.v2).map(|(&a, &b)| (a - b - d_bar).powi(2)).sum()
+    };
+    let s_d = (sq / (wsum - 1.0)).sqrt();
+    if s_d == 0.0 {
+        return Err(SocStatError::InsufficientData(
+            "paired t-test is undefined: zero variance in the differences".into(),
+        ));
+    }
+
+    let se = s_d / wsum.sqrt();
+    let t = d_bar / se;
+    let df = wsum - 1.0;
+    let dist = StudentsTDist::new(df)?;
+    let p = two_sided_tail(&dist, t);
+    let tcrit = dist.inverse_cdf(0.975);
+    let ci = (d_bar - tcrit * se, d_bar + tcrit * se);
+
+    // Pearson correlation of the paired values (undefined for n < 3).
+    let w_opt = if has_w { Some(paired.weights.as_slice()) } else { None };
+    let correlation = if paired.n >= 3 {
+        pearson(&paired.v1, &paired.v2, w_opt)?.coefficient
+    } else {
+        f64::NAN
+    };
+
+    Ok(PairedTTest {
+        n: wsum,
+        mean_difference: d_bar,
+        std_dev_difference: s_d,
+        std_error: se,
+        t_statistic: t,
+        df,
+        p_value: p,
+        ci_95: ci,
+        correlation,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Fisher's exact test
+// ---------------------------------------------------------------------------
+
+/// The one-sided / two-sided alternative for Fisher's exact test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Alternative {
+    TwoSided,
+    Less,
+    Greater,
+}
+
+/// Result of Fisher's exact test on a 2×2 table.
+///
+/// All three p-values are reported: the two-sided sum of probabilities at
+/// least as small as the observed table (Fisher's original method), and the
+/// one-sided less / greater endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FisherExactTest {
+    pub table: [[u64; 2]; 2],
+    pub odds_ratio: f64,
+    pub p_value_two_sided: f64,
+    pub p_value_less: f64,
+    pub p_value_greater: f64,
+    pub n: u64,
+}
+
+/// Fisher's exact test of independence on a 2×2 contingency table.
+///
+/// Uses the hypergeometric distribution (fixed margins) and computes binomial
+/// coefficients in log space to avoid overflow. The odds ratio uses the
+/// Haldane–Anscombe correction when any cell is zero.
+pub fn fisher_exact(
+    table: [[u64; 2]; 2],
+    alternative: Alternative,
+) -> SocStatResult<FisherExactTest> {
+    let [[a, b], [c, d]] = table;
+    let n1 = a + b; // Row 1 total
+    let n2 = c + d; // Row 2 total
+    let m1 = a + c; // Column 1 total
+    let n = a + b + c + d;
+    if n == 0 {
+        return Err(SocStatError::InsufficientData(
+            "Fisher's exact test needs a non-empty table".into(),
+        ));
+    }
+
+    let odds_ratio = if a == 0 || b == 0 || c == 0 || d == 0 {
+        ((a as f64 + 0.5) * (d as f64 + 0.5)) / ((b as f64 + 0.5) * (c as f64 + 0.5))
+    } else {
+        (a as f64 * d as f64) / (b as f64 * c as f64)
+    };
+
+    // Plausible range of a given the fixed margins.
+    let a_min = n1.saturating_sub(n - m1);
+    let a_max = n1.min(m1);
+
+    let ln_comb = |nn: u64, kk: u64| -> f64 {
+        if kk > nn {
+            return f64::NEG_INFINITY;
+        }
+        ln_gamma(nn as f64 + 1.0) - ln_gamma(kk as f64 + 1.0) - ln_gamma((nn - kk) as f64 + 1.0)
+    };
+    let ln_p = |a_prime: u64| -> f64 {
+        ln_comb(n1, a_prime) + ln_comb(n2, (n - m1).saturating_sub(a_prime)) - ln_comb(n, n1)
+    };
+
+    let p_obs = ln_p(a).exp();
+
+    let mut p_two = 0.0_f64;
+    let mut p_less = 0.0_f64;
+    let mut p_greater = 0.0_f64;
+    for a_prime in a_min..=a_max {
+        let p = ln_p(a_prime).exp();
+        if p <= p_obs {
+            p_two += p;
+        }
+        if a_prime <= a {
+            p_less += p;
+        }
+        if a_prime >= a {
+            p_greater += p;
+        }
+    }
+    let _ = alternative; // all three alternatives are reported above
+    Ok(FisherExactTest {
+        table,
+        odds_ratio,
+        p_value_two_sided: p_two.min(1.0),
+        p_value_less: p_less.min(1.0),
+        p_value_greater: p_greater.min(1.0),
+        n,
+    })
+}
+
+/// Cross-tabulate two columns into a 2×2 count table for Fisher's exact test.
+///
+/// Frequency weights are rounded to integer counts. Both variables must have
+/// exactly two distinct categories (and a common grand total > 0).
+pub(crate) fn fisher_table_from_columns(
+    v1: &ColumnData,
+    v2: &ColumnData,
+    weights: Option<&[f64]>,
+) -> SocStatResult<[[u64; 2]; 2]> {
+    let l1 = extract_labels(v1);
+    let l2 = extract_labels(v2);
+    let rows: Vec<&str> = l1.iter().flatten().map(String::as_str).collect::<BTreeSet<_>>()
+        .into_iter().collect();
+    let cols: Vec<&str> = l2.iter().flatten().map(String::as_str).collect::<BTreeSet<_>>()
+        .into_iter().collect();
+    if rows.len() != 2 || cols.len() != 2 {
+        return Err(SocStatError::InsufficientData(
+            "Fisher's exact test requires both variables to have exactly two categories".into(),
+        ));
+    }
+    let mut counts = [[0.0_f64; 2]; 2];
+    for i in 0..l1.len() {
+        let (Some(a), Some(b)) = (&l1[i], &l2[i]) else { continue };
+        let w = weights.map(|ws| ws[i]).unwrap_or(1.0);
+        if !positive_weight(w) {
+            continue;
+        }
+        let ri = if a == rows[0] { 0 } else { 1 };
+        let ci = if b == cols[0] { 0 } else { 1 };
+        counts[ri][ci] += w;
+    }
+    Ok([
+        [counts[0][0].round() as u64, counts[0][1].round() as u64],
+        [counts[1][0].round() as u64, counts[1][1].round() as u64],
+    ])
+}
+
+// ---------------------------------------------------------------------------
+// Wilcoxon signed-rank test
+// ---------------------------------------------------------------------------
+
+/// Result of a Wilcoxon signed-rank test on paired differences.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WilcoxonSignedRankResult {
+    /// Effective sample size (sum of weights of the retained non-zero diffs).
+    pub n: f64,
+    pub w_positive: f64,
+    pub w_negative: f64,
+    pub z_score: f64,
+    pub p_value: f64,
+    pub has_ties: bool,
+    /// Whether any zero differences (excluded from ranking) were present.
+    pub has_zeros: bool,
+}
+
+/// Wilcoxon signed-rank test on paired observations.
+///
+/// Computes dᵢ = xᵢ − yᵢ, drops zero differences, ranks `|dᵢ|` with mid-ranks,
+/// then applies the normal approximation with a continuity correction (R's
+/// default `correct = TRUE`). Requires at least 10 non-zero differences.
+pub fn wilcoxon_signed_rank(
+    v1: &ColumnData,
+    v2: &ColumnData,
+    weights: Option<&[f64]>,
+) -> SocStatResult<WilcoxonSignedRankResult> {
+    let s1 = v1.as_numeric().ok_or_else(|| SocStatError::TypeMismatch {
+        var: String::new(),
+        expected: "Numeric",
+        actual: "Text",
+    })?;
+    let s2 = v2.as_numeric().ok_or_else(|| SocStatError::TypeMismatch {
+        var: String::new(),
+        expected: "Numeric",
+        actual: "Text",
+    })?;
+    let paired = align_paired_slices(s1, s2, weights)?;
+    let has_w = !paired.weights.is_empty();
+
+    // Differences (value, weight), dropping zero differences.
+    let mut diffs: Vec<(f64, f64)> = paired
+        .v1
+        .iter()
+        .zip(&paired.v2)
+        .enumerate()
+        .filter_map(|(i, (&a, &b))| {
+            let d = a - b;
+            (d != 0.0).then(|| (d, if has_w { paired.weights[i] } else { 1.0 }))
+        })
+        .collect();
+    let has_zeros = paired.n > diffs.len();
+    if diffs.len() < 10 {
+        return Err(SocStatError::InsufficientData(
+            "Wilcoxon signed-rank needs ≥ 10 non-zero differences for the normal approximation"
+                .into(),
+        ));
+    }
+
+    let n_eff: f64 = if has_w { diffs.iter().map(|(_, w)| w).sum() } else { diffs.len() as f64 };
+
+    // Sort by |dᵢ| and assign weighted mid-ranks across ties.
+    diffs.sort_by(|a, b| a.0.abs().partial_cmp(&b.0.abs()).unwrap());
+    let mut ranks = vec![0.0_f64; diffs.len()];
+    let mut has_ties = false;
+    let mut tie_adj = 0.0_f64;
+    let mut i = 0;
+    while i < diffs.len() {
+        let mut j = i + 1;
+        while j < diffs.len() && diffs[j].0.abs() == diffs[i].0.abs() {
+            j += 1;
+        }
+        let block_w: f64 = diffs[i..j].iter().map(|(_, w)| w).sum();
+        let cum_before: f64 = diffs[..i].iter().map(|(_, w)| w).sum();
+        let avg_rank = cum_before + (block_w + 1.0) / 2.0;
+        for rank in ranks[i..j].iter_mut() {
+            *rank = avg_rank;
+        }
+        if j - i > 1 {
+            has_ties = true;
+            tie_adj += block_w.powi(3) - block_w;
+        }
+        i = j;
+    }
+
+    let w_pos: f64 = diffs.iter().zip(&ranks)
+        .filter(|((d, _), _)| *d > 0.0)
+        .map(|((_, w), r)| w * r)
+        .sum();
+    let w_neg: f64 = diffs.iter().zip(&ranks)
+        .filter(|((d, _), _)| *d < 0.0)
+        .map(|((_, w), r)| w * r)
+        .sum();
+
+    let n = n_eff;
+    if n <= 0.0 {
+        return Err(SocStatError::InsufficientData(
+            "Wilcoxon signed-rank has no valid non-zero differences".into(),
+        ));
+    }
+    let mu = n * (n + 1.0) / 4.0;
+    let sigma_sq = n * (n + 1.0) * (2.0 * n + 1.0) / 24.0 - tie_adj / 48.0;
+    if sigma_sq <= 0.0 {
+        return Err(SocStatError::Computation(
+            "Wilcoxon signed-rank variance is zero".into(),
+        ));
+    }
+    let sigma = sigma_sq.sqrt();
+    // Continuity correction (R default correct = TRUE).
+    let z = ((w_pos - mu).abs() - 0.5) / sigma;
+    let p = 2.0 * (1.0 - NormalDist::standard().cdf(z.abs()));
+
+    Ok(WilcoxonSignedRankResult {
+        n,
+        w_positive: w_pos,
+        w_negative: w_neg,
+        z_score: z,
+        p_value: p,
+        has_ties,
+        has_zeros,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Kruskal–Wallis H test
+// ---------------------------------------------------------------------------
+
+/// Result of a Kruskal–Wallis H test.
+///
+/// Reuses [`RankSummary`] (shared with the Mann–Whitney U test) for the
+/// per-group rank summaries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KruskalWallisResult {
+    pub group_stats: Vec<RankSummary>,
+    pub h_statistic: f64,
+    pub df: f64,
+    pub p_value: f64,
+    pub has_ties: bool,
+    pub n: f64,
+    /// Set when small samples make the chi-squared approximation unreliable.
+    pub warning: Option<String>,
+}
+
+/// Kruskal–Wallis rank-sum test of `dep` (numeric) across the groups of
+/// `factor`.
+///
+/// Uses average ranks (mid-ranks across ties) and the standard tie correction.
+/// Case weights are honored. A `warning` is set when a group is very small.
+pub fn kruskal_wallis(
+    dep: &ColumnData,
+    factor: &ColumnData,
+    weights: Option<&[f64]>,
+) -> SocStatResult<KruskalWallisResult> {
+    let groups = split_groups(dep, factor, weights)?;
+    if groups.len() < 2 {
+        return Err(SocStatError::InsufficientData(
+            "Kruskal–Wallis test needs at least two groups".into(),
+        ));
+    }
+    // Reject groups with no valid cases; sum the total effective size.
+    let mut total_n = 0.0_f64;
+    for g in &groups {
+        let ni: f64 = g.pairs.iter().map(|(_, w)| w).sum();
+        if ni <= 0.0 {
+            return Err(SocStatError::InsufficientData(
+                "Kruskal–Wallis test: a group has no valid cases".into(),
+            ));
+        }
+        total_n += ni;
+    }
+
+    let k = groups.len();
+    let (rank_sums, has_ties, tie_adj) = rank_all_groups(&groups);
+
+    let sum_r2_n: f64 = groups.iter().zip(&rank_sums)
+        .map(|(g, &rs)| {
+            let ni: f64 = g.pairs.iter().map(|(_, w)| w).sum();
+            rs * rs / ni
+        })
+        .sum();
+    let h = (12.0 / (total_n * (total_n + 1.0))) * sum_r2_n - 3.0 * (total_n + 1.0);
+
+    // Tie correction: H_adj = H / (1 − Σ(tⱼ³−tⱼ) / (N³ − N)).
+    let denom = total_n.powi(3) - total_n;
+    let h_adj = if denom > 0.0 {
+        let tie_factor = 1.0 - tie_adj / denom;
+        if tie_factor > 0.0 { h / tie_factor } else { h }
+    } else {
+        h
+    };
+
+    let df = (k - 1) as f64;
+    let p = 1.0 - ChiSquaredDist::new(df)?.cdf(h_adj);
+
+    let warning = if k < 3
+        || groups.iter().any(|g| g.pairs.iter().map(|(_, w)| w).sum::<f64>() < 5.0)
+    {
+        Some("chi-squared approximation may be unreliable due to small samples".into())
+    } else {
+        None
+    };
+
+    let group_stats = groups.iter().zip(&rank_sums)
+        .map(|(g, &rs)| {
+            let ni: f64 = g.pairs.iter().map(|(_, w)| w).sum();
+            RankSummary { label: g.label.clone(), n: ni, rank_sum: rs, mean_rank: rs / ni }
+        })
+        .collect();
+
+    Ok(KruskalWallisResult {
+        group_stats,
+        h_statistic: h_adj,
+        df,
+        p_value: p,
+        has_ties,
+        n: total_n,
+        warning,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1078,5 +1379,167 @@ mod unit {
         // df = 1 (Cauchy) still well-behaved
         let dist1 = StudentsTDist::new(1.0).unwrap();
         assert!(two_sided_tail(&dist1, 0.0) == 1.0);
+    }
+
+    // ---- Paired t-test ----
+
+    #[test]
+    fn paired_ttest_matches_hand_computed() {
+        // Differences d = x − y = [2, 3, 1, 4, 5]; d̄ = 3, s_d = √2.5.
+        let v1 = num_col(&[Some(8.0), Some(7.0), Some(6.0), Some(9.0), Some(10.0)]);
+        let v2 = num_col(&[Some(6.0), Some(4.0), Some(5.0), Some(5.0), Some(5.0)]);
+        let r = paired_t_test(&v1, &v2, None).unwrap();
+
+        assert_abs_diff_eq!(r.n, 5.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(r.mean_difference, 3.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(r.std_dev_difference, 2.5_f64.sqrt(), epsilon = 1e-12);
+        assert_abs_diff_eq!(r.std_error, 2.5_f64.sqrt() / 5.0_f64.sqrt(), epsilon = 1e-12);
+        assert_abs_diff_eq!(r.t_statistic, 4.242_640_687, epsilon = 1e-6);
+        assert_abs_diff_eq!(r.df, 4.0, epsilon = 1e-12);
+        // R: with d̄=3, s_d=√2.5, n=5 → t(4) = 4.2426, two-sided p ≈ 0.0132.
+        assert!(r.p_value > 0.0 && r.p_value < 0.05);
+        // Pearson correlation of the paired observations r = 1/√20.
+        assert_abs_diff_eq!(r.correlation, 1.0 / 20.0_f64.sqrt(), epsilon = 1e-12);
+        // 95% CI: 3 ± t(0.975,4) · se, t(0.975,4) = 2.776445.
+        let tcrit = 2.776_445;
+        let se = std::f64::consts::FRAC_1_SQRT_2; // = √2.5/√5 = 0.7071…
+        assert_abs_diff_eq!(r.ci_95.0, 3.0 - tcrit * se, epsilon = 1e-6);
+        assert_abs_diff_eq!(r.ci_95.1, 3.0 + tcrit * se, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn paired_ttest_insufficient_data() {
+        let v1 = num_col(&[Some(1.0), Some(2.0)]);
+        let v2 = num_col(&[Some(1.0), Some(3.0)]);
+        // Only one valid pair after listwise deletion of the missing row.
+        let v2m = num_col(&[Some(1.0), None]);
+        assert!(paired_t_test(&v1, &v2m, None).is_err());
+        // Zero variance in differences → error, not panic.
+        let a = num_col(&[Some(5.0), Some(5.0), Some(5.0)]);
+        let b = num_col(&[Some(3.0), Some(3.0), Some(3.0)]);
+        assert!(paired_t_test(&a, &b, None).is_err());
+        // v2 unused otherwise; keep reference for clarity.
+        let _ = &v2;
+    }
+
+    // ---- Fisher's exact test ----
+
+    #[test]
+    fn fisher_exact_matches_hand_computed() {
+        // Table [[1,3],[3,1]]: hypergeometric on margins (n1=4, m1=4), N=8.
+        // p(two-sided) = 34/70, p(less) = 17/70, p(greater) = 69/70, OR = 1/9.
+        let r = fisher_exact([[1, 3], [3, 1]], Alternative::TwoSided).unwrap();
+        assert_abs_diff_eq!(r.odds_ratio, 1.0 / 9.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(r.p_value_two_sided, 34.0 / 70.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(r.p_value_less, 17.0 / 70.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(r.p_value_greater, 69.0 / 70.0, epsilon = 1e-12);
+        assert_eq!(r.n, 8);
+
+        // Symmetric [[2,2],[2,2]]: every table is as likely → p(two-sided) = 1, OR = 1.
+        let s = fisher_exact([[2, 2], [2, 2]], Alternative::TwoSided).unwrap();
+        assert_abs_diff_eq!(s.odds_ratio, 1.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(s.p_value_two_sided, 1.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn fisher_exact_edge_cases() {
+        // Empty table → error.
+        assert!(fisher_exact([[0, 0], [0, 0]], Alternative::TwoSided).is_err());
+        // Zero cell: Haldane–Anscombe correction keeps OR finite.
+        let r = fisher_exact([[0, 5], [5, 0]], Alternative::Less).unwrap();
+        assert_abs_diff_eq!(r.odds_ratio, 0.25 / 30.25, epsilon = 1e-12);
+        assert!(r.p_value_two_sided.is_finite());
+    }
+
+    #[test]
+    fn fisher_table_builds_from_columns() {
+        let v1 = text_col(&[Some("A"), Some("A"), Some("B"), Some("B"), Some("B")]);
+        let v2 = text_col(&[Some("X"), Some("Y"), Some("X"), Some("Y"), Some("Y")]);
+        let t = fisher_table_from_columns(&v1, &v2, None).unwrap();
+        // A->X:1, A->Y:1, B->X:1, B->Y:2.
+        assert_eq!(t, [[1, 1], [1, 2]]);
+        // A third category must be rejected.
+        let v1c = text_col(&[Some("A"), Some("A"), Some("B"), Some("B"), Some("C")]);
+        assert!(fisher_table_from_columns(&v1c, &v2, None).is_err());
+    }
+
+    // ---- Wilcoxon signed-rank ----
+
+    #[test]
+    fn wilcoxon_all_positive_matches_hand_computed() {
+        // Differences 1..10 all positive: W⁺ = Σ ranks = 55, n = 10.
+        let v1 = num_col(&(1..=10).map(|i| Some(i as f64)).collect::<Vec<_>>());
+        let v2 = num_col(&[Some(0.0); 10]);
+        let r = wilcoxon_signed_rank(&v1, &v2, None).unwrap();
+        assert_abs_diff_eq!(r.n, 10.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(r.w_positive, 55.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(r.w_negative, 0.0, epsilon = 1e-12);
+        assert!(!r.has_ties);
+        assert!(!r.has_zeros);
+        // mu = 27.5, var = 10*11*21/24 = 96.25, z = (55−27.5−0.5)/√96.25 = 2.7521.
+        let expected_z = (55.0 - 27.5 - 0.5) / 96.25_f64.sqrt();
+        assert_abs_diff_eq!(r.z_score, expected_z, epsilon = 1e-9);
+        // p ≈ 0.0059.
+        assert!(r.p_value > 0.0 && r.p_value < 0.05);
+    }
+
+    #[test]
+    fn wilcoxon_too_few_nonzero_errors() {
+        let v1 = num_col(&[Some(1.0), Some(2.0), Some(3.0), Some(4.0), Some(5.0)]);
+        let v2 = num_col(&[Some(1.0), Some(2.0), Some(4.0), Some(3.0), Some(5.0)]);
+        assert!(wilcoxon_signed_rank(&v1, &v2, None).is_err());
+    }
+
+    // ---- Kruskal–Wallis ----
+
+    #[test]
+    fn kruskal_wallis_matches_hand_computed() {
+        // Groups A=[1,4], B=[2,5], C=[3,6]; ranks 1..6 with no ties.
+        let dep = num_col(&[Some(1.0), Some(4.0), Some(2.0), Some(5.0), Some(3.0), Some(6.0)]);
+        let fct = num_col(&[Some(1.0), Some(1.0), Some(2.0), Some(2.0), Some(3.0), Some(3.0)]);
+        let r = kruskal_wallis(&dep, &fct, None).unwrap();
+        // Rank sums: A=1+4=5, B=2+5=7, C=3+6=9.
+        assert_abs_diff_eq!(r.group_stats[0].rank_sum, 5.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(r.group_stats[1].rank_sum, 7.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(r.group_stats[2].rank_sum, 9.0, epsilon = 1e-12);
+        assert!(!r.has_ties);
+        assert_abs_diff_eq!(r.n, 6.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(r.df, 2.0, epsilon = 1e-12);
+        // H = 12/(6·7)·155/2 − 21 = 155/7 − 21 = 1.142857.
+        assert_abs_diff_eq!(r.h_statistic, 155.0 / 7.0 - 21.0, epsilon = 1e-12);
+        // p = 1 − χ²₂(1.142857) ≈ 1 − (1 − e^−1.142857/2) = e^−0.571428 = 0.5647.
+        assert_abs_diff_eq!(r.p_value, (-1.142_857_142_857_143_f64 / 2.0).exp(), epsilon = 1e-6);
+        // Small groups (n = 2 each) → approximation warning set.
+        assert!(r.warning.is_some());
+    }
+
+    #[test]
+    fn kruskal_wallis_rejects_single_group() {
+        let dep = num_col(&[Some(1.0), Some(2.0), Some(3.0)]);
+        let fct = num_col(&[Some(1.0), Some(1.0), Some(1.0)]);
+        assert!(kruskal_wallis(&dep, &fct, None).is_err());
+    }
+
+    // ---- New result serde round-trips ----
+
+    #[test]
+    fn serde_round_trip_new_results() {
+        let r = fisher_exact([[1, 3], [3, 1]], Alternative::TwoSided).unwrap();
+        let json = serde_json::to_string(&r).unwrap();
+        let back: FisherExactTest = serde_json::from_str(&json).unwrap();
+        assert_abs_diff_eq!(back.p_value_two_sided, r.p_value_two_sided, epsilon = 1e-15);
+
+        let s = KruskalWallisResult {
+            group_stats: vec![RankSummary { label: "A".into(), n: 2.0, rank_sum: 5.0, mean_rank: 2.5 }],
+            h_statistic: 1.142_857,
+            df: 2.0,
+            p_value: 0.56,
+            has_ties: false,
+            n: 6.0,
+            warning: None,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: KruskalWallisResult = serde_json::from_str(&json).unwrap();
+        assert_abs_diff_eq!(back.h_statistic, s.h_statistic, epsilon = 1e-15);
     }
 }

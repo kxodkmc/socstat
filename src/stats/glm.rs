@@ -71,7 +71,7 @@ use crate::data::{ColumnData, Dataset, RowView};
 use crate::dist::{Distribution, NormalDist};
 use crate::error::{SocStatError, SocStatResult};
 
-use super::regression::cleaned_numeric_column;
+use super::shared::cleaned_numeric_column;
 
 // ---------------------------------------------------------------------------
 // GLM family abstraction

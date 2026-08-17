@@ -42,6 +42,7 @@ use serde::{Deserialize, Serialize};
 use crate::data::{ColumnData, Dataset, RowView};
 use crate::dist::{Distribution, FDist, NormalDist, StudentsTDist};
 use crate::error::{SocStatError, SocStatResult};
+use crate::stats::shared::*;
 
 // ---------------------------------------------------------------------------
 // Result structs (Hard Rule 1: all serializable)
@@ -138,29 +139,37 @@ pub struct LinearRegressionResult {
     pub coefficients: Vec<Coefficient>,
 }
 
-// ---------------------------------------------------------------------------
-// Rank helpers
-// ---------------------------------------------------------------------------
-
-/// Average ranks with ties (mid-ranks). Inputs must be finite.
-fn rank_data(data: &[f64]) -> Vec<f64> {
-    let mut idx: Vec<usize> = (0..data.len()).collect();
-    idx.sort_by(|&a, &b| data[a].total_cmp(&data[b]));
-    let mut ranks = vec![0.0; data.len()];
-    let mut i = 0;
-    while i < idx.len() {
-        let mut j = i;
-        while j + 1 < idx.len() && data[idx[j + 1]] == data[idx[i]] {
-            j += 1;
-        }
-        let avg = ((i + 1) + (j + 1)) as f64 / 2.0;
-        for k in i..=j {
-            ranks[idx[k]] = avg;
-        }
-        i = j + 1;
-    }
-    ranks
+/// Variance inflation factor for a single predictor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VifResult {
+    pub variable: String,
+    /// Variance inflation factor = 1 / (1 − R²ⱼ).
+    pub vif: f64,
+    /// Tolerance = 1 − R²ⱼ = 1 / VIF.
+    pub tolerance: f64,
+    /// R² of regressing `variable` on the other predictors.
+    pub r_squared: f64,
 }
+
+/// Partial correlation of two variables controlling for a set of other
+/// variables (residual method).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartialCorrelationResult {
+    pub var1: String,
+    pub var2: String,
+    pub controlling_for: Vec<String>,
+    pub coefficient: f64,
+    pub p_value: f64,
+    /// Number of complete cases used.
+    pub n: f64,
+    /// df = n − k − 2, where `k` is the number of control variables.
+    pub df: f64,
+    pub method: CorrelationMethod,
+}
+
+// ---------------------------------------------------------------------------
+// Correlation
+// ---------------------------------------------------------------------------
 
 /// Average ranks treating weights as frequency weights (each case counts as
 /// `weight` replicates). Mirrors the tie handling in the Mann–Whitney test.
@@ -185,15 +194,6 @@ fn weighted_ranks(data: &[f64], w: &[f64]) -> Vec<f64> {
         i = j;
     }
     ranks
-}
-
-// ---------------------------------------------------------------------------
-// Correlation
-// ---------------------------------------------------------------------------
-
-/// True for a usable frequency weight: finite and strictly positive.
-fn positive_weight(w: f64) -> bool {
-    w.is_finite() && w > 0.0
 }
 
 /// Row-wise aligned numeric pairs with optional frequency weights.
@@ -525,23 +525,6 @@ pub(crate) fn correlation_pair_aligned(
 // Linear regression
 // ---------------------------------------------------------------------------
 
-/// Extract a variable's numeric values with user-missing values converted to
-/// `None`, so dataset-level analyses exclude them (Hard Rule 4).
-pub(crate) fn cleaned_numeric_column(ds: &Dataset, name: &str) -> SocStatResult<Vec<Option<f64>>> {
-    let idx = ds.index_of(name)?;
-    let var = &ds.variables()[idx];
-    let col = ds.column(idx)?;
-    let slice = col.as_numeric().ok_or_else(|| SocStatError::TypeMismatch {
-        var: name.to_string(),
-        expected: "Numeric",
-        actual: "Text",
-    })?;
-    Ok(slice
-        .iter()
-        .map(|o| o.filter(|v| !var.is_user_missing(*v)))
-        .collect())
-}
-
 /// Fit a linear regression model from typed columns.
 ///
 /// `dep` is the numeric dependent variable; `indep` lists `(name, column)`
@@ -775,11 +758,6 @@ fn fit_ols(
 // Model helpers
 // ---------------------------------------------------------------------------
 
-/// Two-sided tail probability for a symmetric distribution.
-fn two_sided_tail(dist: &impl Distribution, stat: f64) -> f64 {
-    2.0 * (1.0 - dist.cdf(stat.abs()))
-}
-
 impl LinearRegressionResult {
     /// Fit a model from a dataset, resolving variables by name.
     ///
@@ -862,6 +840,208 @@ impl LinearRegressionResult {
     pub fn intercept(&self) -> f64 {
         self.coefficients.first().map(|c| c.estimate).unwrap_or(0.0)
     }
+}
+
+// ---------------------------------------------------------------------------
+// VIF / collinearity diagnostics
+// ---------------------------------------------------------------------------
+
+/// Variance inflation factors for a set of predictor columns.
+///
+/// For each predictor `j`, regresses it on the remaining predictors and
+/// reports `VIF_j = 1 / (1 − R²ⱼ)`. Requires at least two predictors. A
+/// perfect fit (`R²ⱼ = 1`) means the predictor is fully collinear with the
+/// others and returns `SocStatError::SingularMatrix`.
+pub fn variance_inflation_factors(
+    indep: &[(&str, &ColumnData)],
+    weights: Option<&[f64]>,
+) -> SocStatResult<Vec<VifResult>> {
+    if indep.len() < 2 {
+        return Err(SocStatError::InsufficientData(
+            "VIF needs at least two predictor variables".into(),
+        ));
+    }
+    let mut results = Vec::with_capacity(indep.len());
+    for (j, &(name_j, col_j)) in indep.iter().enumerate() {
+        let others: Vec<(&str, &ColumnData)> = indep
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != j)
+            .map(|(_, v)| *v)
+            .collect();
+        let model = linear_regression(name_j, col_j, &others, weights)?;
+        let r_sq = model.r_squared;
+        if r_sq >= 1.0 {
+            return Err(SocStatError::SingularMatrix(format!(
+                "perfect collinearity for variable '{name_j}'"
+            )));
+        }
+        let vif = 1.0 / (1.0 - r_sq);
+        results.push(VifResult {
+            variable: name_j.to_string(),
+            vif,
+            tolerance: 1.0 - r_sq,
+            r_squared: r_sq,
+        });
+    }
+    Ok(results)
+}
+
+// ---------------------------------------------------------------------------
+// Partial correlation
+// ---------------------------------------------------------------------------
+
+/// Partial correlation of `x` and `y` controlling for `controls` (residual
+/// method, mathematically equivalent to the precision-matrix approach).
+///
+/// Regresses `x` and `y` separately on the control variables, then correlates
+/// the residuals. `df = n − k − 2` where `k` is the number of controls. Both
+/// variables must be numeric; at least one control is required.
+pub fn partial_correlation(
+    var1: &str,
+    var2: &str,
+    x: &ColumnData,
+    y: &ColumnData,
+    controls: &[(&str, &ColumnData)],
+    weights: Option<&[f64]>,
+    method: CorrelationMethod,
+) -> SocStatResult<PartialCorrelationResult> {
+    if controls.is_empty() {
+        return Err(SocStatError::Other(
+            "no control variables; use correlation_pair instead".into(),
+        ));
+    }
+    let xs = x.as_numeric().ok_or_else(|| SocStatError::TypeMismatch {
+        var: var1.to_string(),
+        expected: "Numeric",
+        actual: "Text",
+    })?;
+    let ys = y.as_numeric().ok_or_else(|| SocStatError::TypeMismatch {
+        var: var2.to_string(),
+        expected: "Numeric",
+        actual: "Text",
+    })?;
+    let n = xs.len();
+    if n != ys.len() {
+        return Err(SocStatError::ColumnLengthMismatch { expected: n, got: ys.len() });
+    }
+    if let Some(w) = weights
+        && w.len() != n
+    {
+        return Err(SocStatError::ColumnLengthMismatch { expected: n, got: w.len() });
+    }
+
+    // Listwise align x, y, all controls, and weights.
+    let c_slices: Vec<&[Option<f64>]> = controls
+        .iter()
+        .map(|(name, c)| {
+            c.as_numeric().ok_or_else(|| SocStatError::TypeMismatch {
+                var: (*name).to_string(),
+                expected: "Numeric",
+                actual: "Text",
+            })
+        })
+        .collect::<SocStatResult<_>>()?;
+    for c in &c_slices {
+        if c.len() != n {
+            return Err(SocStatError::ColumnLengthMismatch { expected: n, got: c.len() });
+        }
+    }
+
+    let mut xa = Vec::with_capacity(n);
+    let mut ya = Vec::with_capacity(n);
+    let mut ca: Vec<Vec<f64>> = vec![Vec::new(); controls.len()];
+    let mut wa = Vec::with_capacity(n);
+    for i in 0..n {
+        let (Some(xv), Some(yv)) = (xs[i], ys[i]) else { continue };
+        if !xv.is_finite() || !yv.is_finite() {
+            continue;
+        }
+        let mut complete = true;
+        for (j, c) in c_slices.iter().enumerate() {
+            match c[i] {
+                Some(v) if v.is_finite() => ca[j].push(v),
+                _ => {
+                    complete = false;
+                    break;
+                }
+            }
+        }
+        if !complete {
+            continue;
+        }
+        let w = weights.map(|ws| ws[i]).unwrap_or(1.0);
+        if !positive_weight(w) {
+            continue;
+        }
+        xa.push(xv);
+        ya.push(yv);
+        wa.push(w);
+    }
+
+    let n_valid = xa.len();
+    let k = controls.len();
+    let df = n_valid as f64 - k as f64 - 2.0;
+    if n_valid == 0 || df <= 0.0 {
+        return Err(SocStatError::InsufficientData(format!(
+            "partial correlation needs n ≥ k+3, got n={n_valid}, k={k}"
+        )));
+    }
+
+    // Residuals of x and y on the controls (data already listwise-cleaned).
+    let to_col = |values: Vec<f64>| ColumnData::Numeric(values.into_iter().map(Some).collect());
+    let x_col = to_col(xa.clone());
+    let y_col = to_col(ya.clone());
+    let c_cols: Vec<ColumnData> = ca.iter().map(|col| to_col(col.clone())).collect();
+    let c_refs: Vec<(&str, &ColumnData)> =
+        controls.iter().zip(&c_cols).map(|((name, _), c)| (*name, c)).collect();
+    let w_ref = Some(&wa[..]);
+
+    let reg_x = linear_regression(var1, &x_col, &c_refs, w_ref)?;
+    let e_x = fitted_residuals(&xa, &ca, &reg_x);
+    let reg_y = linear_regression(var2, &y_col, &c_refs, w_ref)?;
+    let e_y = fitted_residuals(&ya, &ca, &reg_y);
+
+    let r = match method {
+        CorrelationMethod::Pearson => pearson(&e_x, &e_y, w_ref)?.coefficient,
+        CorrelationMethod::Spearman => spearman(&e_x, &e_y, w_ref)?.coefficient,
+        CorrelationMethod::Kendall => kendall(&e_x, &e_y, w_ref)?.coefficient,
+    };
+    if r.abs() >= 1.0 {
+        return Err(SocStatError::Other("perfect correlation".into()));
+    }
+
+    let dist = StudentsTDist::new(df)?;
+    let t = r * (df / (1.0 - r * r)).sqrt();
+    let p = two_sided_tail(&dist, t);
+
+    Ok(PartialCorrelationResult {
+        var1: var1.to_string(),
+        var2: var2.to_string(),
+        controlling_for: controls.iter().map(|(name, _)| (*name).to_string()).collect(),
+        coefficient: r,
+        p_value: p,
+        n: n_valid as f64,
+        df,
+        method,
+    })
+}
+
+/// Residuals `y − (β₀ + Σ βᵢ·xᵢ)` from a fitted model, matched by row to the
+/// aligned `y` and control columns used to fit it.
+fn fitted_residuals(y: &[f64], x: &[Vec<f64>], model: &LinearRegressionResult) -> Vec<f64> {
+    let intercept = model.coefficients[0].estimate;
+    y.iter()
+        .enumerate()
+        .map(|(i, &yi)| {
+            let fitted = intercept
+                + x.iter()
+                    .enumerate()
+                    .map(|(j, col)| model.coefficients[j + 1].estimate * col[i])
+                    .sum::<f64>();
+            yi - fitted
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1188,5 +1368,108 @@ mod tests {
     fn regression_trait_missing_variable_errors() {
         let d = dataset(&[1.0, 2.0, 3.0], &[2.0, 4.0, 6.0]);
         assert!(d.regression("y", &["nope"]).is_err());
+    }
+
+    // ---- VIF ----
+
+    #[test]
+    fn vif_uncorrelated_predictors_are_one() {
+        // x1, x2 are centered and mutually orthogonal → R² = 0 → VIF = 1.
+        let x1 = num_col(&[Some(1.0), Some(-1.0), Some(1.0), Some(-1.0), Some(1.0), Some(-1.0)]);
+        let x2 = num_col(&[Some(1.0), Some(1.0), Some(-1.0), Some(-1.0), Some(1.0), Some(1.0)]);
+        let r = variance_inflation_factors(&[("x1", &x1), ("x2", &x2)], None).unwrap();
+        assert_eq!(r.len(), 2);
+        assert_abs_diff_eq!(r[0].vif, 1.0, epsilon = 1e-9);
+        assert_abs_diff_eq!(r[1].vif, 1.0, epsilon = 1e-9);
+        assert_abs_diff_eq!(r[0].tolerance, 1.0, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn vif_collinear_predictors_exceed_one() {
+        // x1 and x3 are correlated (but not collinear) → VIF > 1.
+        let x1 = num_col(&[Some(1.0), Some(2.0), Some(3.0), Some(4.0), Some(5.0), Some(6.0)]);
+        let x2 = num_col(&[Some(4.0), Some(2.0), Some(5.0), Some(1.0), Some(3.0), Some(6.0)]);
+        let x3 = num_col(&[Some(2.0), Some(3.0), Some(5.0), Some(6.0), Some(7.0), Some(8.0)]);
+        let r = variance_inflation_factors(&[("x1", &x1), ("x2", &x2), ("x3", &x3)], None).unwrap();
+        assert_eq!(r.len(), 3);
+        for v in &r {
+            assert!(v.vif >= 1.0);
+            assert!(v.tolerance <= 1.0);
+            assert_abs_diff_eq!(v.vif, 1.0 / v.tolerance, epsilon = 1e-9);
+        }
+    }
+
+    #[test]
+    fn vif_edge_cases() {
+        // Fewer than two predictors → error.
+        let x = num_col(&[Some(1.0), Some(2.0), Some(3.0)]);
+        assert!(variance_inflation_factors(&[("x", &x)], None).is_err());
+        // Perfectly collinear predictors → SingularMatrix, not a panic.
+        let x1 = num_col(&[Some(1.0), Some(2.0), Some(3.0), Some(4.0)]);
+        let x2 = num_col(&[Some(2.0), Some(4.0), Some(6.0), Some(8.0)]); // = 2·x1
+        assert!(matches!(
+            variance_inflation_factors(&[("x1", &x1), ("x2", &x2)], None),
+            Err(SocStatError::SingularMatrix(_))
+        ));
+    }
+
+    // ---- Partial correlation ----
+
+    #[test]
+    fn partial_correlation_matches_closed_form() {
+        // For one control, partial r equals the closed form
+        // r_xy·c = (r_xy − r_xc·r_yc) / √((1−r_xc²)(1−r_yc²)).
+        let c = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+        let x = [3.0, 5.0, 4.0, 7.0, 6.0, 8.0, 10.0, 9.0, 11.0, 12.0];
+        let y = [2.0, 3.0, 5.0, 4.0, 7.0, 6.0, 8.0, 10.0, 9.0, 11.0];
+
+        let rxy = pearson(&x, &y, None).unwrap().coefficient;
+        let rxc = pearson(&x, &c, None).unwrap().coefficient;
+        let ryc = pearson(&y, &c, None).unwrap().coefficient;
+        let expected = (rxy - rxc * ryc) / ((1.0 - rxc * rxc) * (1.0 - ryc * ryc)).sqrt();
+
+        let cx = double_column(&x);
+        let cy = double_column(&y);
+        let cc = double_column(&c);
+        let r = partial_correlation("x", "y", &cx, &cy, &[("c", &cc)], None, CorrelationMethod::Pearson)
+            .unwrap();
+        assert_eq!(r.controlling_for, vec!["c".to_string()]);
+        assert_abs_diff_eq!(r.n, 10.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(r.df, 7.0, epsilon = 1e-12); // n − k − 2 = 10−1−2
+        assert_abs_diff_eq!(r.coefficient, expected, epsilon = 1e-9);
+        assert!((0.0..=1.0).contains(&r.p_value));
+        assert_eq!(r.method, CorrelationMethod::Pearson);
+    }
+
+    #[test]
+    fn partial_correlation_identical_variables_errors() {
+        // e_x == e_y when x == y → r = 1, rejected as perfect correlation.
+        let x = double_column(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let c = double_column(&[2.0, 3.0, 1.0, 5.0, 4.0]);
+        assert!(partial_correlation("x", "y", &x, &x, &[("c", &c)], None, CorrelationMethod::Pearson)
+            .is_err());
+    }
+
+    #[test]
+    fn partial_correlation_edge_cases() {
+        let x = double_column(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        let y = double_column(&[3.0, 3.0, 4.0, 5.0, 6.0]);
+        // No controls → error directing to correlation_pair.
+        assert!(partial_correlation("x", "y", &x, &y, &[], None, CorrelationMethod::Pearson).is_err());
+        // Too few cases for df (needs n ≥ k+3). n=3, k=1 → df=0.
+        let small = double_column(&[1.0, 2.0, 3.0]);
+        let c = double_column(&[1.0, 2.0, 3.0]);
+        assert!(partial_correlation("x", "y", &small, &small, &[("c", &c)], None, CorrelationMethod::Pearson).is_err());
+        // Serde round-trip on a valid case.
+        let c = double_column(&[2.0, 1.0, 4.0, 3.0, 5.0]);
+        let r = partial_correlation("x", "y", &x, &y, &[("c", &c)], None, CorrelationMethod::Pearson).unwrap();
+        let json = serde_json::to_string(&r).unwrap();
+        let back: PartialCorrelationResult = serde_json::from_str(&json).unwrap();
+        assert_abs_diff_eq!(back.coefficient, r.coefficient, epsilon = 1e-15);
+    }
+
+    /// Build a numeric column of `Some` values.
+    fn double_column(values: &[f64]) -> ColumnData {
+        ColumnData::Numeric(values.iter().copied().map(Some).collect())
     }
 }

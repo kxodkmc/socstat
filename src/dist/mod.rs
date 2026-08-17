@@ -17,11 +17,13 @@
 mod chi_squared;
 mod f_dist;
 mod normal;
+mod studentized_range;
 mod students_t;
 
 pub use chi_squared::ChiSquaredDist;
 pub use f_dist::FDist;
 pub use normal::NormalDist;
+pub use studentized_range::ptukey;
 pub use students_t::StudentsTDist;
 
 /// A continuous probability distribution.

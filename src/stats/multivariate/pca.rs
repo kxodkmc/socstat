@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::data::Dataset;
 use crate::error::{SocStatError, SocStatResult};
-use crate::stats::regression::cleaned_numeric_column;
+use crate::stats::shared::cleaned_numeric_column;
 
 use super::{compute_weighted_covariance, listwise_clean};
 

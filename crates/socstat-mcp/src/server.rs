@@ -157,7 +157,7 @@ impl SocstatMcpServer {
     }
 
     #[tool(
-        description = "Build a crosstabulation (contingency table) of two variables",
+        description = "Build a crosstabulation (contingency table) of two variables; var1 maps to rows and var2 maps to columns",
         annotations(title = "Crosstab", read_only_hint = true)
     )]
     pub async fn crosstab(&self, Parameters(req): Parameters<describe::TwoVarRequest>) -> Result<Json<Value>, String> {
@@ -274,9 +274,9 @@ impl SocstatMcpServer {
         description = "Correlation between every pair of the given variables (method: pearson, spearman, or kendall)",
         annotations(title = "Correlation matrix", read_only_hint = true)
     )]
-    pub async fn correlation(&self, Parameters(req): Parameters<regression::CorrelationMatrixRequest>) -> Result<Json<Value>, String> {
+    pub async fn correlation_matrix(&self, Parameters(req): Parameters<regression::CorrelationMatrixRequest>) -> Result<Json<Value>, String> {
         let _guard = self.gate.lock().await;
-        Ok(Json(regression::correlation(&self.state, req)?))
+        Ok(Json(regression::correlation_matrix(&self.state, req)?))
     }
 
     #[tool(

@@ -23,10 +23,10 @@ pub struct VarRequest {
 pub struct TwoVarRequest {
     /// Dataset name.
     pub dataset: String,
-    /// Row variable.
-    pub row_var: String,
-    /// Column variable.
-    pub col_var: String,
+    /// First variable (rows of the contingency table).
+    pub var1: String,
+    /// Second variable (columns of the contingency table).
+    pub var2: String,
 }
 
 /// Comprehensive descriptive statistics for a numeric variable.
@@ -44,5 +44,5 @@ pub fn frequencies(state: &SharedState, req: VarRequest) -> Result<Value, String
 /// Crosstabulation (contingency table) of two variables.
 pub fn crosstab(state: &SharedState, req: TwoVarRequest) -> Result<Value, String> {
     let ds = state.require(&req.dataset)?;
-    to_value(&ds.crosstab(&req.row_var, &req.col_var).map_err(|e| e.to_string())?)
+    to_value(&ds.crosstab(&req.var1, &req.var2).map_err(|e| e.to_string())?)
 }

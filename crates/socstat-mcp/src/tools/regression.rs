@@ -80,8 +80,8 @@ pub fn correlation_pair(state: &SharedState, req: CorrelationRequest) -> Result<
     to_value(&ds.correlation_pair(&req.var1, &req.var2, method).map_err(|e| e.to_string())?)
 }
 
-/// Correlation between every pair of the given variables.
-pub fn correlation(state: &SharedState, req: CorrelationMatrixRequest) -> Result<Value, String> {
+/// Correlation matrix between every pair of the given variables.
+pub fn correlation_matrix(state: &SharedState, req: CorrelationMatrixRequest) -> Result<Value, String> {
     let ds = state.require(&req.dataset)?;
     let method = parse_method(&req.method)?;
     let vars: Vec<&str> = req.vars.iter().map(|s| s.as_str()).collect();

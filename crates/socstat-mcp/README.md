@@ -137,7 +137,7 @@ socstat-mcp
 |------|------|------|
 | `descriptive` | `dataset`, `var` | 数值变量的描述统计：均值、标准差、中位数、四分位数、偏度、峰度、95% 置信区间等 |
 | `frequencies` | `dataset`, `var` | 任意变量的频数表（计数与百分比） |
-| `crosstab` | `dataset`, `row_var`, `col_var` | 两变量的交叉表（列联表） |
+| `crosstab` | `dataset`, `var1`, `var2` | 两变量的交叉表（列联表，`var1` 为行、`var2` 为列） |
 
 ### 假设检验
 
@@ -171,7 +171,7 @@ socstat-mcp
 | 工具 | 参数 | 说明 |
 |------|------|------|
 | `correlation_pair` | `dataset`, `var1`, `var2`, `method` | 两变量的相关系数（`pearson` / `spearman` / `kendall`） |
-| `correlation` | `dataset`, `vars[]`, `method` | 给定变量两两之间的相关矩阵（上三角） |
+| `correlation_matrix` | `dataset`, `vars[]`, `method` | 给定变量两两之间的相关矩阵（上三角） |
 | `vif` | `dataset`, `vars[]` | 方差膨胀因子（多重共线性诊断，需 ≥2 个预测变量） |
 | `partial_correlation` | `dataset`, `var1`, `var2`, `controls[]`, `method` | 控制变量的偏相关（残差法，`controls` 至少 1 个） |
 | `linear_regression` | `dataset`, `dep_var`, `indep_vars[]` | 线性回归（OLS，恒含截距） |
@@ -196,7 +196,7 @@ socstat-mcp
 3. preview        { "dataset": "survey", "rows": 5 }
 4. descriptive    { "dataset": "survey", "var": "income" }
 5. frequencies    { "dataset": "survey", "var": "gender" }
-6. crosstab       { "dataset": "survey", "row_var": "gender", "col_var": "education" }
+6. crosstab       { "dataset": "survey", "var1": "gender", "var2": "education" }
 7. independent_t_test { "dataset": "survey", "dep_var": "income", "group_var": "gender" }
 8. linear_regression  { "dataset": "survey", "dep_var": "income", "indep_vars": ["age", "education"] }
 ```

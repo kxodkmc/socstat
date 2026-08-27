@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::dist::{Distribution, StudentsTDist};
+use crate::error::{SocStatError, SocStatResult};
 
 /// Comprehensive descriptive statistics for a single variable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,9 +44,12 @@ pub struct Descriptive {
 
 /// Compute descriptive statistics from a slice of valid numeric values.
 ///
-/// If `weights` is `Some`, they are used as frequency weights.
-/// The lengths of `data` and `weights` must match.
-pub fn compute(data: &[f64], weights: Option<&[f64]>) -> Descriptive {
+/// If `weights` is `Some`, they are used as frequency weights. The lengths of
+/// `data` and `weights` must match. The sample variance, skewness, kurtosis,
+/// and CI are undefined without at least two valid cases, so fewer than two
+/// cases return [`SocStatError::InsufficientData`] instead of silently
+/// reporting a meaningless `std_dev = 0`.
+pub fn compute(data: &[f64], weights: Option<&[f64]>) -> SocStatResult<Descriptive> {
     let n = data.len();
     let w = match weights {
         Some(w) if w.len() == n => w,
@@ -55,6 +59,11 @@ pub fn compute(data: &[f64], weights: Option<&[f64]>) -> Descriptive {
 
     // Effective N
     let n_eff: f64 = if weighted { w.iter().sum() } else { n as f64 };
+    if n_eff < 2.0 {
+        return Err(SocStatError::InsufficientData(
+            "at least two valid cases are required for descriptive statistics".into(),
+        ));
+    }
 
     // Sum and mean
     let (sum, mean) = if weighted {
@@ -88,12 +97,8 @@ pub fn compute(data: &[f64], weights: Option<&[f64]>) -> Descriptive {
         (s2 / n_eff, s3 / n_eff, s4 / n_eff)
     };
 
-    // Sample variance: m2 * n / (n-1)
-    let variance = if n_eff > 1.0 {
-        m2 * n_eff / (n_eff - 1.0)
-    } else {
-        0.0
-    };
+    // Sample variance (denominator n−1).
+    let variance = m2 * n_eff / (n_eff - 1.0);
     let std_dev = variance.sqrt();
 
     // Skewness: m3 / m2^(3/2)
@@ -143,19 +148,15 @@ pub fn compute(data: &[f64], weights: Option<&[f64]>) -> Descriptive {
     // Standard error of the mean
     let sem = std_dev / n_eff.sqrt();
 
-    // 95% CI: mean ± t(0.975, n-1) * sem
-    let ci_95 = if n_eff > 1.0 {
-        let df = n_eff - 1.0;
-        let t_crit = StudentsTDist::new(df)
-            .ok()
-            .map(|d| d.inverse_cdf(0.975))
-            .unwrap_or(1.96);
-        (mean - t_crit * sem, mean + t_crit * sem)
-    } else {
-        (mean, mean)
-    };
+    // 95% CI: mean ± t(0.975, n-1) * sem (n_eff ≥ 2 is guaranteed above).
+    let df = n_eff - 1.0;
+    let t_crit = StudentsTDist::new(df)
+        .ok()
+        .map(|d| d.inverse_cdf(0.975))
+        .unwrap_or(1.96);
+    let ci_95 = (mean - t_crit * sem, mean + t_crit * sem);
 
-    Descriptive {
+    Ok(Descriptive {
         n: n_eff,
         mean,
         std_dev,
@@ -171,7 +172,7 @@ pub fn compute(data: &[f64], weights: Option<&[f64]>) -> Descriptive {
         q3,
         sem,
         ci_95,
-    }
+    })
 }
 
 /// Linear-interpolation percentile from a sorted slice.
@@ -218,7 +219,7 @@ mod tests {
     #[test]
     fn basic_stats() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-        let d = compute(&data, None);
+        let d = compute(&data, None).unwrap();
         assert_abs_diff_eq!(d.mean, 3.0, epsilon = 1e-10);
         assert_abs_diff_eq!(d.std_dev, 1.5811, epsilon = 1e-3);
         assert_abs_diff_eq!(d.variance, 2.5, epsilon = 1e-10);
@@ -233,7 +234,7 @@ mod tests {
     fn skewness_symmetric_data() {
         // Symmetric data → skewness ≈ 0
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-        let d = compute(&data, None);
+        let d = compute(&data, None).unwrap();
         assert!(d.skewness.abs() < 1e-10);
     }
 
@@ -241,14 +242,14 @@ mod tests {
     fn kurtosis_uniform_data() {
         // Uniform distribution → excess kurtosis ≈ -1.2
         let data: Vec<f64> = (1..=6).map(|x| x as f64).collect();
-        let d = compute(&data, None);
+        let d = compute(&data, None).unwrap();
         assert!(d.kurtosis < 0.0, "uniform should have negative excess kurtosis");
     }
 
     #[test]
     fn quartiles_even_count() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-        let d = compute(&data, None);
+        let d = compute(&data, None).unwrap();
         // Type 7 (linear): idx = p*(n-1)
         // Q1: 0.25*7=1.75 → sorted[1]*0.25 + sorted[2]*0.75 = 2*0.25+3*0.75 = 2.75
         assert_abs_diff_eq!(d.q1, 2.75, epsilon = 1e-10);
@@ -262,7 +263,7 @@ mod tests {
     fn weighted_mean() {
         let data = vec![1.0, 2.0, 3.0];
         let weights = vec![1.0, 2.0, 3.0]; // weighted mean = (1+4+9)/6 = 14/6
-        let d = compute(&data, Some(&weights));
+        let d = compute(&data, Some(&weights)).unwrap();
         assert_abs_diff_eq!(d.mean, 14.0 / 6.0, epsilon = 1e-10);
         assert_abs_diff_eq!(d.n, 6.0, epsilon = 1e-10);
     }
@@ -271,8 +272,8 @@ mod tests {
     fn weighted_matches_unweighted_when_unit_weights() {
         let data = vec![10.0, 20.0, 30.0];
         let weights = vec![1.0, 1.0, 1.0];
-        let d_w = compute(&data, Some(&weights));
-        let d_u = compute(&data, None);
+        let d_w = compute(&data, Some(&weights)).unwrap();
+        let d_u = compute(&data, None).unwrap();
         assert_abs_diff_eq!(d_w.mean, d_u.mean, epsilon = 1e-10);
         assert_abs_diff_eq!(d_w.variance, d_u.variance, epsilon = 1e-10);
         assert_abs_diff_eq!(d_w.skewness, d_u.skewness, epsilon = 1e-10);
@@ -281,17 +282,17 @@ mod tests {
     #[test]
     fn ci_95_brackets_mean() {
         let data = vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0];
-        let d = compute(&data, None);
+        let d = compute(&data, None).unwrap();
         assert!(d.ci_95.0 < d.mean);
         assert!(d.ci_95.1 > d.mean);
     }
 
     #[test]
-    fn single_value() {
+    fn single_value_errors() {
+        // Regression for 发现-7: variance/CI are undefined for n < 2, so a
+        // single case must be an error, not a silent std_dev = 0.
         let data = vec![42.0];
-        let d = compute(&data, None);
-        assert_abs_diff_eq!(d.mean, 42.0, epsilon = 1e-10);
-        assert!(d.std_dev.is_nan() || d.std_dev == 0.0);
-        assert_abs_diff_eq!(d.min, 42.0, epsilon = 0.0);
+        assert!(compute(&data, None).is_err());
+        assert!(compute(&[], None).is_err());
     }
 }

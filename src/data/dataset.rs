@@ -249,6 +249,14 @@ impl Dataset {
         Ok(())
     }
 
+    /// Drop the case-weight variable so subsequent analyses are unweighted.
+    ///
+    /// Weighting cannot be undone through `set_weight` alone (it takes a
+    /// variable name); this is the explicit way to stop weighting.
+    pub fn clear_weight(&mut self) {
+        self.weight_var = None;
+    }
+
     /// Get the weight values for all cases (or `None` if unweighted).
     pub fn weights(&self) -> Option<Vec<f64>> {
         let idx = self.weight_var?;
@@ -328,6 +336,19 @@ mod tests {
         ds.push_row(vec![Value::Number(1.0), Value::Number(2.0)]).unwrap();
         ds.push_row(vec![Value::Number(3.0), Value::Number(5.0)]).unwrap();
         assert_eq!(ds.weights(), Some(vec![2.0, 5.0]));
+    }
+
+    #[test]
+    fn clear_weight_stops_weighting() {
+        let mut ds = Dataset::new();
+        ds.add_var(Variable::numeric("x")).unwrap();
+        ds.add_var(Variable::numeric("w").weight()).unwrap();
+        ds.push_row(vec![Value::Number(1.0), Value::Number(2.0)]).unwrap();
+        ds.push_row(vec![Value::Number(3.0), Value::Number(5.0)]).unwrap();
+        ds.set_weight("w").unwrap();
+        assert!(ds.weights().is_some());
+        ds.clear_weight();
+        assert!(ds.weights().is_none());
     }
 
     #[test]

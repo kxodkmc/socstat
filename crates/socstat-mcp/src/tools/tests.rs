@@ -65,23 +65,6 @@ pub struct FisherRequest {
     pub var1: String,
     /// Second (categorical) variable.
     pub var2: String,
-    /// Alternative hypothesis: `two-sided` (default), `less`, or `greater`.
-    /// socstat reports all three p-values regardless of this choice.
-    #[schemars(default = "default_alternative")]
-    pub alternative: String,
-}
-
-fn default_alternative() -> String { "two-sided".into() }
-
-fn parse_alternative(s: &str) -> Result<Alternative, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "two-sided" | "two_sided" | "twosided" => Ok(Alternative::TwoSided),
-        "less" => Ok(Alternative::Less),
-        "greater" => Ok(Alternative::Greater),
-        other => Err(format!(
-            "unknown alternative '{other}'; expected 'two-sided', 'less', or 'greater'"
-        )),
-    }
 }
 
 /// Paired-samples t-test of the mean difference between two numeric variables
@@ -95,10 +78,7 @@ pub fn paired_t_test(state: &SharedState, req: TwoVarRequest) -> Result<Value, S
 /// variables that each have exactly two categories.
 pub fn fisher_exact_test(state: &SharedState, req: FisherRequest) -> Result<Value, String> {
     let ds = state.require(&req.dataset)?;
-    let alternative = parse_alternative(&req.alternative)?;
-    to_value(
-        &ds.fisher_exact_test(&req.var1, &req.var2, alternative).map_err(|e| e.to_string())?,
-    )
+    to_value(&ds.fisher_exact_test(&req.var1, &req.var2).map_err(|e| e.to_string())?)
 }
 
 /// Wilcoxon signed-rank test on paired observations of two numeric variables

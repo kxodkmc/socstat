@@ -115,7 +115,8 @@ pub(crate) fn post_hoc(
                 }
                 PostHocMethod::Scheffe => {
                     let se = (ms_within * (1.0 / ni + 1.0 / nj)).sqrt();
-                    let f = diff * diff / (se * se);
+                    // For any contrast, Scheffé's F = t²/(k−1) ~ F(k−1, df_within).
+                    let f = diff * diff / (se * se) / (m - 1) as f64;
                     let dist = FDist::new((m - 1) as f64, df_within)?;
                     let p = 1.0 - dist.cdf(f);
                     // Scheffé critical value S* = √((m−1)·F(0.95, m−1, df)).
@@ -148,7 +149,7 @@ fn inverse_ptukey(p: f64, k: usize, df: f64) -> f64 {
     while ptukey(hi, k, df) < target {
         hi *= 2.0;
     }
-    for _ in 0..80 {
+    for _ in 0..60 {
         let mid = 0.5 * (lo + hi);
         if ptukey(mid, k, df) < target {
             lo = mid;
@@ -240,6 +241,20 @@ mod tests {
             let recomputed = 1.0 - fdist.cdf(c.statistic);
             assert_abs_diff_eq!(c.p_value, recomputed, epsilon = 1e-9);
             assert!(c.p_value.is_finite());
+        }
+    }
+
+    #[test]
+    fn scheffe_statistic_is_t_squared_over_k_minus_1() {
+        // Regression for BUG-5: Scheffé F must be t²/(k−1), not t².
+        let g = balanced_groups();
+        let ms = ms_within_of(&g);
+        let k = g.len();
+        let r = post_hoc(&g, ms, 15.0, PostHocMethod::Scheffe).unwrap();
+        for c in &r.comparisons {
+            let t = c.mean_difference / c.std_error;
+            let expected_f = t * t / (k - 1) as f64;
+            assert_abs_diff_eq!(c.statistic, expected_f, epsilon = 1e-12);
         }
     }
 

@@ -211,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn fisher_exact_accepts_valid_alternative() {
+    fn fisher_exact_reports_all_three_p_values() {
         let mut ds = Dataset::new();
         ds.add_var(Variable::text("g").value_label("A", "A").value_label("B", "B")).unwrap();
         ds.add_var(Variable::text("h").value_label("X", "X").value_label("Y", "Y")).unwrap();
@@ -224,21 +224,29 @@ mod tests {
             dataset: "t".into(),
             var1: "g".into(),
             var2: "h".into(),
-            alternative: "two-sided".into(),
         };
         let out = tests::fisher_exact_test(&state, req).unwrap();
         assert!(out["odds_ratio"].as_f64().unwrap().is_finite());
         assert!(out["p_value_two_sided"].as_f64().unwrap().is_finite());
+        assert!(out["p_value_less"].as_f64().unwrap().is_finite());
+        assert!(out["p_value_greater"].as_f64().unwrap().is_finite());
     }
 
     #[test]
-    fn fisher_exact_rejects_bad_alternative() {
-        let state = paired_state();
+    fn fisher_requires_two_categories() {
+        // A variable with three categories is not a valid 2×2 table.
+        let mut d2 = Dataset::new();
+        d2.add_var(Variable::text("g")).unwrap();
+        d2.add_var(Variable::text("h")).unwrap();
+        for (g, h) in [("A", "X"), ("B", "Y"), ("C", "X"), ("A", "Y"), ("B", "X")] {
+            d2.push_row(vec![Value::Text(g.into()), Value::Text(h.into())]).unwrap();
+        }
+        let state = SharedState::new();
+        state.load("t".into(), d2);
         let req = tests::FisherRequest {
-            dataset: "pair".into(),
-            var1: "pre".into(),
-            var2: "post".into(),
-            alternative: "sideways".into(), // invalid
+            dataset: "t".into(),
+            var1: "g".into(),
+            var2: "h".into(),
         };
         assert!(tests::fisher_exact_test(&state, req).is_err());
     }

@@ -748,14 +748,6 @@ pub fn paired_t_test(
 // Fisher's exact test
 // ---------------------------------------------------------------------------
 
-/// The one-sided / two-sided alternative for Fisher's exact test.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Alternative {
-    TwoSided,
-    Less,
-    Greater,
-}
-
 /// Result of Fisher's exact test on a 2×2 table.
 ///
 /// All three p-values are reported: the two-sided sum of probabilities at
@@ -773,13 +765,11 @@ pub struct FisherExactTest {
 
 /// Fisher's exact test of independence on a 2×2 contingency table.
 ///
-/// Uses the hypergeometric distribution (fixed margins) and computes binomial
-/// coefficients in log space to avoid overflow. The odds ratio uses the
-/// Haldane–Anscombe correction when any cell is zero.
-pub fn fisher_exact(
-    table: [[u64; 2]; 2],
-    alternative: Alternative,
-) -> SocStatResult<FisherExactTest> {
+/// Returns all three one- and two-sided p-values. Uses the hypergeometric
+/// distribution (fixed margins) and computes binomial coefficients in log
+/// space to avoid overflow. The odds ratio uses the Haldane–Anscombe
+/// correction when any cell is zero.
+pub fn fisher_exact(table: [[u64; 2]; 2]) -> SocStatResult<FisherExactTest> {
     let [[a, b], [c, d]] = table;
     let n1 = a + b; // Row 1 total
     let n2 = c + d; // Row 2 total
@@ -808,7 +798,10 @@ pub fn fisher_exact(
         ln_gamma(nn as f64 + 1.0) - ln_gamma(kk as f64 + 1.0) - ln_gamma((nn - kk) as f64 + 1.0)
     };
     let ln_p = |a_prime: u64| -> f64 {
-        ln_comb(n1, a_prime) + ln_comb(n2, (n - m1).saturating_sub(a_prime)) - ln_comb(n, n1)
+        // Hypergeometric with fixed margins: pick a' of n1 row-1 items and
+        // m1−a' of n2 row-2 items for column 1 (whose total is m1), out of the
+        // C(n, m1) ways to place m1 items in column 1.
+        ln_comb(n1, a_prime) + ln_comb(n2, m1.saturating_sub(a_prime)) - ln_comb(n, m1)
     };
 
     let p_obs = ln_p(a).exp();
@@ -828,7 +821,6 @@ pub fn fisher_exact(
             p_greater += p;
         }
     }
-    let _ = alternative; // all three alternatives are reported above
     Ok(FisherExactTest {
         table,
         odds_ratio,
@@ -985,8 +977,15 @@ pub fn wilcoxon_signed_rank(
         ));
     }
     let sigma = sigma_sq.sqrt();
-    // Continuity correction (R default correct = TRUE).
-    let z = ((w_pos - mu).abs() - 0.5) / sigma;
+    // Continuity correction (R default correct = TRUE): move each W toward its
+    // null mean, so z carries the sign of (w_pos − mu) like R's wilcox.test.
+    let z = if w_pos > mu {
+        (w_pos - mu - 0.5) / sigma
+    } else if w_pos < mu {
+        (w_pos - mu + 0.5) / sigma
+    } else {
+        0.0
+    };
     let p = 2.0 * (1.0 - NormalDist::standard().cdf(z.abs()));
 
     Ok(WilcoxonSignedRankResult {
@@ -1428,7 +1427,7 @@ mod unit {
     fn fisher_exact_matches_hand_computed() {
         // Table [[1,3],[3,1]]: hypergeometric on margins (n1=4, m1=4), N=8.
         // p(two-sided) = 34/70, p(less) = 17/70, p(greater) = 69/70, OR = 1/9.
-        let r = fisher_exact([[1, 3], [3, 1]], Alternative::TwoSided).unwrap();
+        let r = fisher_exact([[1, 3], [3, 1]]).unwrap();
         assert_abs_diff_eq!(r.odds_ratio, 1.0 / 9.0, epsilon = 1e-12);
         assert_abs_diff_eq!(r.p_value_two_sided, 34.0 / 70.0, epsilon = 1e-12);
         assert_abs_diff_eq!(r.p_value_less, 17.0 / 70.0, epsilon = 1e-12);
@@ -1436,7 +1435,21 @@ mod unit {
         assert_eq!(r.n, 8);
 
         // Symmetric [[2,2],[2,2]]: every table is as likely → p(two-sided) = 1, OR = 1.
-        let s = fisher_exact([[2, 2], [2, 2]], Alternative::TwoSided).unwrap();
+        let s = fisher_exact([[2, 2], [2, 2]]).unwrap();
+        assert_abs_diff_eq!(s.odds_ratio, 1.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(s.p_value_two_sided, 1.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn fisher_exact_asymmetric_matches_scipy() {
+        // Regression for BUG-4: with m1 != n1 the old hypergeometric formula
+        // diverged on BOTH the second binomial argument and the denominator.
+        // scipy.fisher_exact([6,7],[2,10]) gives two-sided p = 0.201562.
+        let r = fisher_exact([[6, 7], [2, 10]]).unwrap();
+        assert_abs_diff_eq!(r.odds_ratio, (6.0 * 10.0) / (7.0 * 2.0), epsilon = 1e-12);
+        assert_abs_diff_eq!(r.p_value_two_sided, 0.201562, epsilon = 1e-5);
+        // Perfectly symmetric [[1,3],[1,3]] (OR = 1) must give p = 1, not 0.
+        let s = fisher_exact([[1, 3], [1, 3]]).unwrap();
         assert_abs_diff_eq!(s.odds_ratio, 1.0, epsilon = 1e-12);
         assert_abs_diff_eq!(s.p_value_two_sided, 1.0, epsilon = 1e-12);
     }
@@ -1444,9 +1457,9 @@ mod unit {
     #[test]
     fn fisher_exact_edge_cases() {
         // Empty table → error.
-        assert!(fisher_exact([[0, 0], [0, 0]], Alternative::TwoSided).is_err());
+        assert!(fisher_exact([[0, 0], [0, 0]]).is_err());
         // Zero cell: Haldane–Anscombe correction keeps OR finite.
-        let r = fisher_exact([[0, 5], [5, 0]], Alternative::Less).unwrap();
+        let r = fisher_exact([[0, 5], [5, 0]]).unwrap();
         assert_abs_diff_eq!(r.odds_ratio, 0.25 / 30.25, epsilon = 1e-12);
         assert!(r.p_value_two_sided.is_finite());
     }
@@ -1490,6 +1503,19 @@ mod unit {
         assert!(wilcoxon_signed_rank(&v1, &v2, None).is_err());
     }
 
+    #[test]
+    fn wilcoxon_z_is_signed() {
+        // All diffs negative → w_pos = 0 < mu, so z must be negative (指向背离
+        // 原假设的方向), matching R. The p-value (from |z|) is unchanged.
+        let v1 = num_col(&[Some(0.0); 10]);
+        let v2 = num_col(&(1..=10).map(|i| Some(i as f64)).collect::<Vec<_>>());
+        let r = wilcoxon_signed_rank(&v1, &v2, None).unwrap();
+        assert!(r.z_score < 0.0, "expected negative z, got {}", r.z_score);
+        // Mirror magnitude of the all-positive case.
+        let expected_z = -(55.0 - 27.5 - 0.5) / 96.25_f64.sqrt();
+        assert_abs_diff_eq!(r.z_score, expected_z, epsilon = 1e-9);
+    }
+
     // ---- Kruskal–Wallis ----
 
     #[test]
@@ -1524,7 +1550,7 @@ mod unit {
 
     #[test]
     fn serde_round_trip_new_results() {
-        let r = fisher_exact([[1, 3], [3, 1]], Alternative::TwoSided).unwrap();
+        let r = fisher_exact([[1, 3], [3, 1]]).unwrap();
         let json = serde_json::to_string(&r).unwrap();
         let back: FisherExactTest = serde_json::from_str(&json).unwrap();
         assert_abs_diff_eq!(back.p_value_two_sided, r.p_value_two_sided, epsilon = 1e-15);

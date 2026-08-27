@@ -78,7 +78,7 @@ pub mod prelude {
     };
     pub use crate::error::{SocStatError, SocStatResult};
     pub use crate::stats::{
-        Alternative, AnovaEffect, ChiSquareTest, Coefficient, ConfusionMatrix, CorrelationMethod,
+        AnovaEffect, ChiSquareTest, Coefficient, ConfusionMatrix, CorrelationMethod,
         CorrelationPair, CorrelationResult, Crosstab, Descriptive, FactorialAnova, FisherExactTest,
         FrequencyRow, FrequencyTable, IndependentTTest, KolmogorovSmirnovResult,
         KruskalWallisResult, KsTestType, LinearRegressionResult, LogisticCoefficient,

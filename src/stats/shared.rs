@@ -58,6 +58,10 @@ pub(crate) struct GroupedData {
 
 /// Split a numeric dependent column into groups by a grouping column,
 /// dropping rows where either value is missing or the weight is ≤ 0.
+///
+/// Groups are returned in lexicographic label order (the same convention as
+/// [`crosstab`](crate::stats::crosstab)), so results are independent of the
+/// input row order.
 pub(crate) fn split_groups(
     dep: &ColumnData,
     group: &ColumnData,
@@ -89,9 +93,9 @@ pub(crate) fn split_groups(
         ColumnData::Text(v) => v.clone(),
     };
 
-    let mut groups: Vec<GroupedData> = Vec::new();
-    let mut index: BTreeMap<String, usize> = BTreeMap::new();
-
+    // Group by label in a BTreeMap so groups come out lexicographically
+    // sorted, independent of appearance order.
+    let mut acc: BTreeMap<String, Vec<(f64, f64)>> = BTreeMap::new();
     for i in 0..n {
         let Some(x) = dep_slice[i] else { continue };
         let Some(label) = &group_labels[i] else { continue };
@@ -99,18 +103,10 @@ pub(crate) fn split_groups(
         if !positive_weight(w) {
             continue;
         }
-        let idx = if let Some(&idx) = index.get(label) {
-            idx
-        } else {
-            let idx = groups.len();
-            index.insert(label.clone(), idx);
-            groups.push(GroupedData { label: label.clone(), pairs: Vec::new() });
-            idx
-        };
-        groups[idx].pairs.push((x, w));
+        acc.entry(label.clone()).or_default().push((x, w));
     }
 
-    Ok(groups)
+    Ok(acc.into_iter().map(|(label, pairs)| GroupedData { label, pairs }).collect())
 }
 
 // ---------------------------------------------------------------------------

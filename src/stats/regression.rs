@@ -656,6 +656,20 @@ fn fit_ols(
     let xtx = xw.tr_mul(&xw);
     let xty = xw.tr_mul(&yw);
 
+    // Guard against a (near-)singular design matrix (BUG-1). Cholesky and LU
+    // both "succeed" on a rank-deficient X'X with an astronomically large
+    // pivot, silently emitting meaningless coefficient SEs. A singular value
+    // at the epsilon scale relative to the largest one means the predictors
+    // are collinear — report it instead of hiding it (mirrors VIF).
+    let svals = xtx.singular_values();
+    let s_max = svals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let s_min = svals.iter().copied().fold(f64::INFINITY, f64::min);
+    if s_max > 0.0 && s_max.is_finite() && s_min <= s_max * f64::EPSILON * (k as f64) {
+        return Err(SocStatError::SingularMatrix(
+            "perfect multicollinearity detected in the design matrix".into(),
+        ));
+    }
+
     // Solve with Cholesky, fall back to LU; singular → error, never panic.
     let (beta, xtx_inv) = if let Some(chol) = xtx.clone().cholesky() {
         (chol.solve(&xty), chol.inverse())

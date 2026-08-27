@@ -69,7 +69,7 @@ pub use regression::{
     PartialCorrelationResult, VifResult,
 };
 pub use tests::{
-    Alternative, ChiSquareTest, Effect, FisherExactTest, GroupSummary, IndependentTTest,
+    ChiSquareTest, Effect, FisherExactTest, GroupSummary, IndependentTTest,
     KruskalWallisResult, LeveneResult, MannWhitneyUTest, OneWayAnova, PairedTTest, RankSummary,
     TTestModel, WilcoxonSignedRankResult,
 };
@@ -283,7 +283,6 @@ pub trait StatsExt {
         &self,
         var1: &str,
         var2: &str,
-        alternative: Alternative,
     ) -> SocStatResult<FisherExactTest>;
 
     /// Wilcoxon signed-rank test on paired observations (differences of the
@@ -412,7 +411,7 @@ impl StatsExt for Dataset {
             ));
         }
 
-        Ok(descriptive::compute(&data, aligned_weights.as_deref()))
+        descriptive::compute(&data, aligned_weights.as_deref())
     }
 
     fn frequencies(&self, var: &str) -> SocStatResult<FrequencyTable> {
@@ -533,12 +532,11 @@ impl StatsExt for Dataset {
         &self,
         var1: &str,
         var2: &str,
-        alternative: Alternative,
     ) -> SocStatResult<FisherExactTest> {
         let c1 = self.column_by_name(var1)?;
         let c2 = self.column_by_name(var2)?;
         let table = tests::fisher_table_from_columns(c1, c2, self.weights().as_deref())?;
-        tests::fisher_exact(table, alternative)
+        tests::fisher_exact(table)
     }
 
     fn wilcoxon_signed_rank_test(
@@ -747,7 +745,7 @@ mod stats_tests {
         assert!(w.p_value.is_finite());
         assert!(w.w_positive > w.w_negative);
 
-        let ft = ds.fisher_exact_test("r", "c", Alternative::TwoSided).unwrap();
+        let ft = ds.fisher_exact_test("r", "c").unwrap();
         assert!(ft.p_value_two_sided.is_finite());
         assert!(ft.odds_ratio.is_finite());
     }

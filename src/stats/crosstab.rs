@@ -47,25 +47,29 @@ pub fn build(row_col: &ColumnData, col_col: &ColumnData) -> SocStatResult<Crosst
     let row_vals = extract_values(row_col);
     let col_vals = extract_values(col_col);
 
-    // Build unique sorted label lists
-    let mut row_map: BTreeMap<String, usize> = BTreeMap::new();
-    let mut col_map: BTreeMap<String, usize> = BTreeMap::new();
-
+    // Collect distinct labels into BTreeMaps first. Indices are assigned by
+    // BTreeMap key order (lexicographic), so the index of each label matches
+    // its position in the sorted `*_labels` vectors below. Assigning indices
+    // by first-appearance order would silently misalign counts and labels.
+    let mut row_keys: BTreeMap<String, usize> = BTreeMap::new();
+    let mut col_keys: BTreeMap<String, usize> = BTreeMap::new();
     for (r, c) in row_vals.iter().zip(col_vals.iter()) {
         if let (Some(rv), Some(cv)) = (r, c) {
-            if !row_map.contains_key(rv) {
-                row_map.insert(rv.clone(), row_map.len());
-            }
-            if !col_map.contains_key(cv) {
-                col_map.insert(cv.clone(), col_map.len());
-            }
+            row_keys.entry(rv.clone()).or_insert(0);
+            col_keys.entry(cv.clone()).or_insert(0);
         }
     }
+    for (i, key) in row_keys.keys().cloned().collect::<Vec<_>>().into_iter().enumerate() {
+        row_keys.insert(key, i);
+    }
+    for (i, key) in col_keys.keys().cloned().collect::<Vec<_>>().into_iter().enumerate() {
+        col_keys.insert(key, i);
+    }
 
-    let n_rows = row_map.len();
-    let n_cols = col_map.len();
-    let row_labels: Vec<String> = row_map.keys().cloned().collect();
-    let col_labels: Vec<String> = col_map.keys().cloned().collect();
+    let n_rows = row_keys.len();
+    let n_cols = col_keys.len();
+    let row_labels: Vec<String> = row_keys.keys().cloned().collect();
+    let col_labels: Vec<String> = col_keys.keys().cloned().collect();
 
     // Count
     let mut counts = vec![vec![0usize; n_cols]; n_rows];
@@ -73,8 +77,8 @@ pub fn build(row_col: &ColumnData, col_col: &ColumnData) -> SocStatResult<Crosst
 
     for (r, c) in row_vals.iter().zip(col_vals.iter()) {
         if let (Some(rv), Some(cv)) = (r, c) {
-            let ri = row_map[rv];
-            let ci = col_map[cv];
+            let ri = row_keys[rv];
+            let ci = col_keys[cv];
             counts[ri][ci] += 1;
             grand_total += 1;
         }
@@ -200,5 +204,22 @@ mod tests {
         let row = ColumnData::Numeric(vec![Some(1.0), Some(2.0)]);
         let col = ColumnData::Numeric(vec![Some(1.0)]);
         assert!(build(&row, &col).is_err());
+    }
+
+    #[test]
+    fn labels_align_with_counts_when_appearance_differs_from_sorted() {
+        // "M" appears first (appearance order: M, F) but sorts after "F".
+        // counts[row_label][col_label] must be aligned lexicographically.
+        let row = ColumnData::Text(vec![
+            Some("M".into()), Some("M".into()), Some("F".into()),
+        ]);
+        let col = ColumnData::Text(vec![
+            Some("G".into()), Some("G".into()), Some("G".into()),
+        ]);
+        let ct = build(&row, &col).unwrap();
+        assert_eq!(ct.row_labels, vec!["F", "M"]);
+        assert_eq!(ct.col_labels, vec!["G"]);
+        // True: F → 1, M → 2. Aligned rows follow the sorted labels.
+        assert_eq!(ct.counts, vec![vec![1], vec![2]]);
     }
 }

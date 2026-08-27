@@ -148,7 +148,7 @@ socstat-mcp
 | `chi_square_test` | `dataset`, `var1`, `var2` | 两分类变量的卡方独立性检验 |
 | `mann_whitney_u_test` | `dataset`, `dep_var`, `group_var` | Mann–Whitney U 非参数检验 |
 | `paired_t_test` | `dataset`, `var1`, `var2` | 配对样本 t 检验（每一行为一对观测） |
-| `fisher_exact_test` | `dataset`, `var1`, `var2`, `alternative` | 2×2 表 Fisher 精确检验（`alternative`: `two-sided` / `less` / `greater`） |
+| `fisher_exact_test` | `dataset`, `var1`, `var2` | 2×2 表 Fisher 精确检验（同时返回 two-sided / less / greater 三个 p 值） |
 | `wilcoxon_signed_rank_test` | `dataset`, `var1`, `var2` | 配对观测的 Wilcoxon 符号秩检验（需 ≥10 个非零差值） |
 | `kruskal_wallis_test` | `dataset`, `dep_var`, `group_var` | Kruskal–Wallis H 非参数检验（2+ 组） |
 

@@ -195,6 +195,51 @@ impl SocstatMcpServer {
     }
 
     #[tool(
+        description = "One-sample t-test of a numeric variable's mean against a reference value mu0",
+        annotations(title = "One-sample t-test", read_only_hint = true)
+    )]
+    pub async fn one_sample_t_test(&self, Parameters(req): Parameters<tests::OneSampleTRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(tests::one_sample_t_test(&self.state, req)?))
+    }
+
+    #[tool(
+        description = "Chi-square goodness-of-fit test of a categorical variable's counts against expected probabilities (uniform by default)",
+        annotations(title = "Chi-square goodness-of-fit", read_only_hint = true)
+    )]
+    pub async fn chi_square_gof_test(&self, Parameters(req): Parameters<tests::GofRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(tests::chi_square_gof_test(&self.state, req)?))
+    }
+
+    #[tool(
+        description = "McNemar test for paired binary outcomes (before/after); exact binomial when discordant pairs < 25, chi-square with continuity correction otherwise",
+        annotations(title = "McNemar test", read_only_hint = true)
+    )]
+    pub async fn mcnemar_test(&self, Parameters(req): Parameters<tests::TwoVarRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(tests::mcnemar_test(&self.state, req)?))
+    }
+
+    #[tool(
+        description = "Two-sample Kolmogorov-Smirnov test comparing the distributions of two independent numeric variables",
+        annotations(title = "Two-sample K-S test", read_only_hint = true)
+    )]
+    pub async fn ks_two_sample_test(&self, Parameters(req): Parameters<tests::TwoVarRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(tests::ks_two_sample_test(&self.state, req)?))
+    }
+
+    #[tool(
+        description = "Friedman rank-sum test for repeated measurements across 3+ treatment columns, with Kendall's W",
+        annotations(title = "Friedman test", read_only_hint = true)
+    )]
+    pub async fn friedman_test(&self, Parameters(req): Parameters<tests::FriedmanRequest>) -> Result<Json<Value>, String> {
+        let _guard = self.gate.lock().await;
+        Ok(Json(tests::friedman_test(&self.state, req)?))
+    }
+
+    #[tool(
         description = "Mann-Whitney U test of a numeric variable between two groups (nonparametric)",
         annotations(title = "Mann-Whitney U", read_only_hint = true)
     )]

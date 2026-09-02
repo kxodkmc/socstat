@@ -27,6 +27,7 @@ pub use state::SharedState;
 
 #[cfg(test)]
 mod tests {
+    use approx::assert_abs_diff_eq;
     use socstat::data::{Dataset, Value, Variable};
 
     use crate::tools::{anova, data, describe, multivariate, normality, regression, tests, transform};
@@ -349,6 +350,91 @@ mod tests {
             method: "fisher".into(),
         };
         assert!(anova::post_hoc(&state, bad).is_err());
+    }
+
+    #[test]
+    fn new_tests_round_trip() {
+        let state = grouped_state();
+
+        // One-sample t.
+        let t_req = tests::OneSampleTRequest {
+            dataset: "grp".into(),
+            var: "score".into(),
+            mu0: 12.0,
+        };
+        let out = tests::one_sample_t_test(&state, t_req).unwrap();
+        assert_eq!(out["df"].as_f64().unwrap(), 8.0);
+        assert!(out["p_value"].as_f64().unwrap().is_finite());
+
+        // Chi-square GOF on the group labels (3 categories, uniform).
+        let gof_req = tests::GofRequest {
+            dataset: "grp".into(),
+            var: "group".into(),
+            probs: None,
+        };
+        let out = tests::chi_square_gof_test(&state, gof_req).unwrap();
+        assert_abs_diff_eq!(out["df"].as_f64().unwrap(), 2.0, epsilon = 1e-12);
+        assert_abs_diff_eq!(out["chi_square"].as_f64().unwrap(), 0.0, epsilon = 1e-12);
+
+        // K-S two-sample between two well-separated columns.
+        let ks_req = tests::TwoVarRequest {
+            dataset: "grp".into(),
+            var1: "score".into(),
+            var2: "score".into(),
+        };
+        let out = tests::ks_two_sample_test(&state, ks_req).unwrap();
+        assert_abs_diff_eq!(out["d_statistic"].as_f64().unwrap(), 0.0, epsilon = 1e-12);
+
+        // Friedman needs a wide-format state.
+        let mut ds = Dataset::new();
+        for v in ["t1", "t2", "t3"] {
+            ds.add_var(Variable::numeric(v)).unwrap();
+        }
+        for row in [
+            [4.0, 3.0, 2.0],
+            [1.0, 2.0, 3.0],
+            [2.0, 1.0, 3.0],
+            [3.0, 4.0, 1.0],
+            [4.0, 2.0, 3.0],
+        ] {
+            ds.push_row(row.iter().map(|&v| Value::Number(v)).collect()).unwrap();
+        }
+        state.load("rep".into(), ds);
+        let fr_req = tests::FriedmanRequest {
+            dataset: "rep".into(),
+            treatments: vec!["t1".into(), "t2".into(), "t3".into()],
+        };
+        let out = tests::friedman_test(&state, fr_req).unwrap();
+        assert_eq!(out["k"], serde_json::json!(3));
+        assert!(out["p_value"].as_f64().unwrap().is_finite());
+
+        // McNemar on a paired binary state.
+        let mut ds = Dataset::new();
+        ds.add_var(Variable::text("before")).unwrap();
+        ds.add_var(Variable::text("after")).unwrap();
+        for (b, a) in [("no", "no"), ("no", "yes"), ("yes", "no"), ("yes", "yes"),
+                       ("no", "yes"), ("yes", "no"), ("no", "no"), ("yes", "yes")] {
+            ds.push_row(vec![Value::Text(b.into()), Value::Text(a.into())]).unwrap();
+        }
+        state.load("pair".into(), ds);
+        let mc_req = tests::TwoVarRequest {
+            dataset: "pair".into(),
+            var1: "before".into(),
+            var2: "after".into(),
+        };
+        let out = tests::mcnemar_test(&state, mc_req).unwrap();
+        assert_eq!(out["discordant"].as_array().unwrap().len(), 2);
+
+        // Games-Howell via the post_hoc endpoint.
+        let gh_req = anova::PostHocRequest {
+            dataset: "grp".into(),
+            dep_var: "score".into(),
+            factor_var: "group".into(),
+            method: "games_howell".into(),
+        };
+        let out = anova::post_hoc(&state, gh_req).unwrap();
+        assert_eq!(out["comparisons"].as_array().unwrap().len(), 3);
+        assert!(out["comparisons"][0]["df"].as_f64().unwrap().is_finite());
     }
 
     fn factorial_state() -> SharedState {

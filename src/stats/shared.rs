@@ -275,6 +275,32 @@ pub(crate) fn rank_all_groups(groups: &[GroupedData]) -> (Vec<f64>, bool, f64) {
 }
 
 /// Average ranks with ties (mid-ranks) for a finite numeric slice.
+/// Two-sided tail probability of the Kolmogorov distribution at `lambda`,
+/// from the alternating series `2 Σ (−1)^(j−1) exp(−2 j² λ²)`.
+///
+/// `λ ≤ 0` (an exactly-reproduced distribution) gives p = 1; for very small
+/// λ the series converges slowly, so ~`1/λ` terms are needed — 100 covers
+/// λ down to 0.01 with margin.
+pub(crate) fn kolmogorov_two_sided_p(lambda: f64) -> f64 {
+    if lambda <= 0.0 {
+        return 1.0;
+    }
+    let mut p = 0.0;
+    for j in 1..=100 {
+        let sign = if j % 2 == 1 { 1.0 } else { -1.0 };
+        p += sign * (-2.0 * (j as f64).powi(2) * lambda * lambda).exp();
+    }
+    (2.0 * p).clamp(0.0, 1.0)
+}
+
+/// Stephens' finite-sample adjustment factor for a Kolmogorov–Smirnov
+/// statistic with effective sample size `n_eff`: multiply the statistic by
+/// `sqrt(n_eff) + 0.12 + 0.11 / sqrt(n_eff)` before the asymptotic series.
+pub(crate) fn stephens_lambda(n_eff: f64, d: f64) -> f64 {
+    let root = n_eff.sqrt();
+    (root + 0.12 + 0.11 / root) * d
+}
+
 pub(crate) fn rank_data(data: &[f64]) -> Vec<f64> {
     let mut idx: Vec<usize> = (0..data.len()).collect();
     idx.sort_by(|&a, &b| data[a].total_cmp(&data[b]));

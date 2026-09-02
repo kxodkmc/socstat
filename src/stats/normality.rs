@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::dist::{Distribution, NormalDist};
 use crate::error::{SocStatError, SocStatResult};
 
-use crate::stats::shared::positive_weight;
+use crate::stats::shared::{kolmogorov_two_sided_p, positive_weight, stephens_lambda};
 
 /// Result of the Shapiro–Wilk normality test.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -324,13 +324,8 @@ pub fn ks_test(
     let (p_value, p_is_approx) = match test_type {
         KsTestType::OneSample { .. } => {
             // Kolmogorov distribution with Stephens' finite-size adjustment.
-            let lambda = (n_eff.sqrt() + 0.12 + 0.11 / n_eff.sqrt()) * d;
-            let mut p = 0.0;
-            for j in 1..=100 {
-                let sign = if j % 2 == 1 { 1.0 } else { -1.0 };
-                p += sign * (-2.0 * (j as f64).powi(2) * lambda * lambda).exp();
-            }
-            ((2.0 * p).clamp(0.0, 1.0), false)
+            let lambda = stephens_lambda(n_eff, d);
+            (kolmogorov_two_sided_p(lambda), false)
         }
         KsTestType::Lilliefors => {
             // Dallal & Wilkinson (1986) approximation.

@@ -29,6 +29,9 @@ pub enum SocStatError {
     #[error("computation error: {0}")]
     Computation(String),
 
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+
     #[error("insufficient data: {0}")]
     InsufficientData(String),
 

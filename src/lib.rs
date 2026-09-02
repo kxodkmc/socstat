@@ -78,14 +78,14 @@ pub mod prelude {
     };
     pub use crate::error::{SocStatError, SocStatResult};
     pub use crate::stats::{
-        AnovaEffect, ChiSquareTest, Coefficient, ConfusionMatrix, CorrelationMethod,
+        AnovaEffect, ChiSquareGof, ChiSquareTest, Coefficient, ConfusionMatrix, CorrelationMethod,
         CorrelationPair, CorrelationResult, Crosstab, Descriptive, FactorialAnova, FisherExactTest,
-        FrequencyRow, FrequencyTable, IndependentTTest, KolmogorovSmirnovResult,
+        FrequencyRow, FrequencyTable, FriedmanResult, IndependentTTest, KolmogorovSmirnovResult,
         KruskalWallisResult, KsTestType, LinearRegressionResult, LogisticCoefficient,
-        LogisticRegressionResult, MannWhitneyUTest, OneWayAnova, PairedTTest,
-        PartialCorrelationResult, PcaMatrix, PcaResult, PostHocMethod, PostHocResult,
-        ReliabilityResult, ShapiroWilkResult, SsType, StatsExt, TTestModel, VifResult,
-        WilcoxonSignedRankResult,
+        LogisticRegressionResult, MannWhitneyUTest, McNemarResult, OneSampleTTest, OneWayAnova,
+        PairedTTest, PartialCorrelationResult, PcaMatrix, PcaResult, PostHocComparison,
+        PostHocMethod, PostHocResult, ReliabilityResult, ShapiroWilkResult, SsType, StatsExt,
+        TTestModel, TwoSampleKsResult, VifResult, WilcoxonSignedRankResult,
     };
     pub use crate::{read, write};
 }

@@ -97,3 +97,70 @@ pub fn kruskal_wallis_test(state: &SharedState, req: ByGroupRequest) -> Result<V
     let ds = state.require(&req.dataset)?;
     to_value(&ds.kruskal_wallis_test(&req.dep_var, &req.group_var).map_err(|e| e.to_string())?)
 }
+
+/// Parameters for a one-sample t-test.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct OneSampleTRequest {
+    /// Dataset name.
+    pub dataset: String,
+    /// Numeric variable to test.
+    pub var: String,
+    /// Reference mean under the null hypothesis.
+    #[schemars(default)]
+    pub mu0: f64,
+}
+
+/// One-sample t-test of a variable's mean against `mu0`.
+pub fn one_sample_t_test(state: &SharedState, req: OneSampleTRequest) -> Result<Value, String> {
+    let ds = state.require(&req.dataset)?;
+    to_value(&ds.one_sample_t_test(&req.var, req.mu0).map_err(|e| e.to_string())?)
+}
+
+/// Parameters for a chi-square goodness-of-fit test.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GofRequest {
+    /// Dataset name.
+    pub dataset: String,
+    /// Categorical variable whose observed counts are tested.
+    pub var: String,
+    /// Expected category probabilities in the variable's sorted category
+    /// order; omit for equal probabilities.
+    pub probs: Option<Vec<f64>>,
+}
+
+/// Chi-square goodness-of-fit test of a categorical variable's counts.
+pub fn chi_square_gof_test(state: &SharedState, req: GofRequest) -> Result<Value, String> {
+    let ds = state.require(&req.dataset)?;
+    to_value(
+        &ds.chi_square_gof_test(&req.var, req.probs.as_deref())
+            .map_err(|e| e.to_string())?,
+    )
+}
+
+/// McNemar test for paired binary outcomes in two categorical variables.
+pub fn mcnemar_test(state: &SharedState, req: TwoVarRequest) -> Result<Value, String> {
+    let ds = state.require(&req.dataset)?;
+    to_value(&ds.mcnemar_test(&req.var1, &req.var2).map_err(|e| e.to_string())?)
+}
+
+/// Two-sample Kolmogorov-Smirnov test between two independent numeric variables.
+pub fn ks_two_sample_test(state: &SharedState, req: TwoVarRequest) -> Result<Value, String> {
+    let ds = state.require(&req.dataset)?;
+    to_value(&ds.ks_two_sample_test(&req.var1, &req.var2).map_err(|e| e.to_string())?)
+}
+
+/// Parameters for the Friedman repeated-measures test.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FriedmanRequest {
+    /// Dataset name.
+    pub dataset: String,
+    /// The treatment variables (3 or more), each one repeated-measure column.
+    pub treatments: Vec<String>,
+}
+
+/// Friedman rank-sum test for repeated measurements across treatment columns.
+pub fn friedman_test(state: &SharedState, req: FriedmanRequest) -> Result<Value, String> {
+    let ds = state.require(&req.dataset)?;
+    let vars: Vec<&str> = req.treatments.iter().map(String::as_str).collect();
+    to_value(&ds.friedman_test(&vars).map_err(|e| e.to_string())?)
+}

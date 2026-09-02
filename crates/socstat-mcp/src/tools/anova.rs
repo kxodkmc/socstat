@@ -19,7 +19,7 @@ pub struct PostHocRequest {
     pub dep_var: String,
     /// Factor variable defining the groups (2+ groups).
     pub factor_var: String,
-    /// Method: `bonferroni`, `tukey`, or `scheffe`.
+    /// Method: `bonferroni`, `tukey`, `scheffe`, or `games_howell`.
     #[schemars(default = "default_method")]
     pub method: String,
 }
@@ -31,8 +31,9 @@ fn parse_method(s: &str) -> Result<PostHocMethod, String> {
         "bonferroni" => Ok(PostHocMethod::Bonferroni),
         "tukey" => Ok(PostHocMethod::Tukey),
         "scheffe" | "scheffé" => Ok(PostHocMethod::Scheffe),
+        "games_howell" | "games-howell" | "gameshowell" => Ok(PostHocMethod::GamesHowell),
         other => Err(format!(
-            "unknown post-hoc method '{other}'; expected 'bonferroni', 'tukey', or 'scheffe'"
+            "unknown post-hoc method '{other}'; expected 'bonferroni', 'tukey', 'scheffe', or 'games_howell'"
         )),
     }
 }
@@ -64,7 +65,7 @@ fn parse_ss_type(s: &str) -> Result<SsType, String> {
 }
 
 /// ANOVA post-hoc comparisons of `dep_var` across the groups of `factor_var`
-/// (Bonferroni / Tukey HSD / Scheffé).
+/// (Bonferroni / Tukey HSD / Scheffé / Games–Howell).
 pub fn post_hoc(state: &SharedState, req: PostHocRequest) -> Result<Value, String> {
     let ds = state.require(&req.dataset)?;
     let method = parse_method(&req.method)?;
